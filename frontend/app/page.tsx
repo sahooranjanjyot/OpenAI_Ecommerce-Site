@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 
 type Product = {
   id: number;
@@ -63,9 +63,7 @@ export default function GroceryUATReadyApp() {
   const [paymentOtp, setPaymentOtp] = useState("");
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [checkoutEmail, setCheckoutEmail] = useState("");
-  const [adminProducts, setAdminProducts] = useState<(Product & { enabled?: boolean; featured?: boolean; hidden?: boolean; image?: string; unit?: string })[]>(
-    productsSeed.map((p) => ({ ...p, enabled: true, featured: false, hidden: false, image: "", unit: "numbers" }))
-  );
+  const [adminProducts, setAdminProducts] = useState<any[]>([]);
   const products = adminProducts.filter(p => !p.hidden && p.enabled !== false);
   const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
   const [editForm, setEditForm] = useState<any>({});
@@ -75,11 +73,25 @@ export default function GroceryUATReadyApp() {
   const [adminTab, setAdminTab] = useState("Catalog");
   const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
   const [inventorySearch, setInventorySearch] = useState("");
-  const [promos, setPromos] = useState([{ id: 1, type: "BOGO", target: "Potato Chips", active: true, start: "2026-04-01", end: "2026-04-15" }]);
+  const [promos, setPromos] = useState<any[]>([]);
   const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "" });
-  const [adminOrders, setAdminOrders] = useState([{ id: 101, customer: "Mrs Smith", status: "new", total: 12.5, items: "Bananas x2, Milk x1", phone: "1234567890" }, { id: 102, customer: "John Doe", status: "delivered", total: 4.5, items: "Basmati Rice x1", phone: "0987654321" }]);
-  const [adminCustomers, setAdminCustomers] = useState([{ id: 1, name: "Mrs Smith", phone: "1234567890", address: "10 Downing St", orders: 5, notes: "orders rice every week", blocked: false }]);
+  const [adminOrders, setAdminOrders] = useState<any[]>([]);
+  const [adminCustomers, setAdminCustomers] = useState<any[]>([]);
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/products").then(r => r.json()),
+      fetch("/api/orders").then(r => r.json()),
+      fetch("/api/customers").then(r => r.json()),
+      fetch("/api/promos").then(r => r.json()),
+    ]).then(([productsData, ordersData, customersData, promosData]) => {
+      setAdminProducts(productsData || []);
+      setAdminOrders(ordersData || []);
+      setAdminCustomers(customersData || []);
+      setPromos(promosData || []);
+    }).catch(console.error);
+  }, []);
 
   const visible = useMemo(() => {
     let list = route === "sale" ? products.filter((p) => p.onSale) : products;
@@ -466,7 +478,7 @@ export default function GroceryUATReadyApp() {
 
         {route === "admin" && (
           <div style={{ maxWidth: 720, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
-            <h2>Admin Secure Login</h2>
+            {!adminLogged && <h2>Admin Secure Login</h2>}
 
             {!adminLogged ? (
               <>
@@ -519,8 +531,6 @@ export default function GroceryUATReadyApp() {
               </>
             ) : (
               <>
-                <div style={{ marginBottom: 16 }}>Admin logged in.</div>
-
                 <div
                   style={{
                     marginTop: 20,
@@ -672,7 +682,7 @@ export default function GroceryUATReadyApp() {
                                       value={editForm.price ?? p.price}
                                       onChange={(e) => setEditForm({ ...editForm, price: parseFloat(e.target.value) || 0 })}
                                       placeholder="Price"
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     />
                                     <input
                                       type="number"
@@ -680,12 +690,12 @@ export default function GroceryUATReadyApp() {
                                       value={editForm.stock ?? p.stock}
                                       onChange={(e) => setEditForm({ ...editForm, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })}
                                       placeholder="Stock"
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     />
                                     <select
                                       value={editForm.unit ?? p.unit ?? "numbers"}
                                       onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     >
                                       {[
                                         "numbers",
@@ -695,6 +705,16 @@ export default function GroceryUATReadyApp() {
                                       ].map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
                                   </div>
+                                  <select 
+                                    value={editForm.promo ?? p.promo ?? ""} 
+                                    onChange={e => setEditForm({ ...editForm, promo: e.target.value, onSale: e.target.value !== "" })}
+                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                  >
+                                    <option value="">No Active Promo</option>
+                                    <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
+                                    <option value="Discount 50%">50% Discount</option>
+                                    <option value="Clearance">Clearance</option>
+                                  </select>
                                   <input
                                     type="text"
                                     value={editForm.image ?? p.image ?? ""}
@@ -716,6 +736,7 @@ export default function GroceryUATReadyApp() {
                                     <button
                                       onClick={() => {
                                         setAdminProducts(adminProducts.map(prod => prod.id === p.id ? { ...prod, ...editForm } : prod));
+                                        fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, ...editForm }) });
                                         setEditingProductId(null);
                                       }}
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, flex: 1, cursor: "pointer" }}
@@ -736,7 +757,21 @@ export default function GroceryUATReadyApp() {
                                   <div>{p.category}</div>
                                   <div>
                                     £{p.price.toFixed(2)} · Stock {p.stock} {p.unit && p.unit !== "numbers" ? p.unit : ""}
+                                    {p.promo && <span style={{ marginLeft: 6, fontSize: 10, background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 10 }}>{p.promo}</span>}
                                   </div>
+                                  
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                                    <button onClick={() => {
+                                      setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod));
+                                      fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: Math.max(0, p.stock - 1) }) });
+                                    }} style={{ padding: "2px 8px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
+                                    <span style={{ fontSize: 12, fontWeight: "bold" }}>{p.stock}</span>
+                                    <button onClick={() => {
+                                      setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod));
+                                      fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 1 }) });
+                                    }} style={{ padding: "2px 8px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
+                                  </div>
+
                                   <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
                                     Status: {p.enabled === false ? "Disabled" : "Enabled"} | Visibility: {p.hidden ? "Hidden" : "Visible"}
                                   </div>
@@ -749,7 +784,10 @@ export default function GroceryUATReadyApp() {
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#2563eb", color: "white", border: 0, flex: 1, cursor: "pointer" }}
                                     >Edit</button>
                                     <button
-                                      onClick={() => setAdminProducts(adminProducts.filter(prod => prod.id !== p.id))}
+                                      onClick={() => {
+                                        setAdminProducts(adminProducts.filter(prod => prod.id !== p.id));
+                                        fetch(`/api/products?id=${p.id}`, { method: "DELETE" });
+                                      }}
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#dc2626", color: "white", border: 0, cursor: "pointer" }}
                                     >Delete</button>
                                   </div>
@@ -812,7 +850,6 @@ export default function GroceryUATReadyApp() {
                               const baseP = parseFloat(newProduct.price)||0;
                               const discP = parseInt(newProduct.discount)||0;
                               const p = { 
-                                id: Date.now(), 
                                 name: newProduct.name, 
                                 category: newProduct.category, 
                                 price: discP > 0 ? baseP * (1 - discP/100) : baseP,
@@ -821,10 +858,16 @@ export default function GroceryUATReadyApp() {
                                 stock: parseInt(newProduct.stock)||0, 
                                 unit: newProduct.unit, 
                                 image: newProduct.image, 
+                                description: newProduct.description,
                                 enabled: true, hidden: false, featured: false 
                               };
-                              setAdminProducts([...adminProducts, p]);
-                              setMessage("Product Published Instantly!");
+                              
+                              fetch("/api/products", {
+                                method: "POST",
+                                body: JSON.stringify(p)
+                              }).then(r => r.json()).then(data => setAdminProducts([...adminProducts, data]));
+                              
+                              setMessage("Product Published to Database!");
                               setNewProduct({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
                             }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
                           </div>
@@ -845,10 +888,22 @@ export default function GroceryUATReadyApp() {
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                               <span style={{ fontSize: 14 }}>Current: {p.stock}</span>
-                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod))} style={{ padding: "4px 10px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
-                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod))} style={{ padding: "4px 10px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
-                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: 0} : prod))} style={{ padding: "4px 10px", background: "#dc2626", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Out of Stock</button>
-                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 50} : prod))} style={{ padding: "4px 10px", background: "#16a34a", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Restock (+50)</button>
+                              <button onClick={() => {
+                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod));
+                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: Math.max(0, p.stock - 1) }) });
+                              }} style={{ padding: "4px 10px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
+                              <button onClick={() => {
+                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod));
+                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 1 }) });
+                              }} style={{ padding: "4px 10px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
+                              <button onClick={() => {
+                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: 0} : prod));
+                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: 0 }) });
+                              }} style={{ padding: "4px 10px", background: "#dc2626", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Out of Stock</button>
+                              <button onClick={() => {
+                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 50} : prod));
+                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 50 }) });
+                              }} style={{ padding: "4px 10px", background: "#16a34a", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Restock (+50)</button>
                             </div>
                           </div>
                         ))}
@@ -928,7 +983,11 @@ export default function GroceryUATReadyApp() {
                               return;
                             }
                             
-                            setPromos([...promos, { id: Date.now(), ...newPromo, active: true }]);
+                            fetch("/api/promos", {
+                                method: "POST",
+                                body: JSON.stringify({...newPromo, active: true})
+                            }).then(r => r.json()).then(data => setPromos([...promos, data]));
+                            
                             setMessage(`Promo on ${newPromo.target} successfully activated!`);
                             setNewPromo({ type: "BOGO", target: "", start: "", end: "" });
                           }} style={{ padding: "10px 16px", background: "#2563eb", color: "white", border: 0, borderRadius: 8, cursor: "pointer" }}>Add Promo</button>
@@ -942,8 +1001,14 @@ export default function GroceryUATReadyApp() {
                               <span style={{ fontSize: 12, color: "#94a3b8" }}>{pr.start} to {pr.end}</span>
                             </div>
                             <div style={{ display: "flex", gap: 8 }}>
-                              <button onClick={() => setPromos(promos.map(x => x.id === pr.id ? {...x, active: !x.active} : x))} style={{ padding: "6px 12px", background: pr.active ? "#16a34a" : "#475569", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>{pr.active ? "Active" : "Disabled"}</button>
-                              <button onClick={() => setPromos(promos.filter(x => x.id !== pr.id))} style={{ padding: "6px 12px", background: "#dc2626", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>Delete</button>
+                              <button onClick={() => {
+                                setPromos(promos.map(x => x.id === pr.id ? {...x, active: !x.active} : x));
+                                fetch("/api/promos", { method: "PUT", body: JSON.stringify({ id: pr.id, active: !pr.active }) });
+                              }} style={{ padding: "6px 12px", background: pr.active ? "#16a34a" : "#475569", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>{pr.active ? "Active" : "Disabled"}</button>
+                              <button onClick={() => {
+                                setPromos(promos.filter(x => x.id !== pr.id));
+                                fetch(`/api/promos?id=${pr.id}`, { method: "DELETE" });
+                              }} style={{ padding: "6px 12px", background: "#dc2626", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>Delete</button>
                             </div>
                           </div>
                         ))}
@@ -1345,40 +1410,17 @@ export default function GroceryUATReadyApp() {
                     ),
                   }));
 
-                  setAdminOrders((prev) => [
-                    ...prev,
-                    {
-                      id: Date.now(),
-                      customer: buyer.name,
-                      status: "new",
-                      total: subtotal,
-                      items: cart.map((c) => `${c.name} x${c.qty}`).join(", "),
-                      phone: buyer.mobile,
-                    },
-                  ]);
-
-                  setAdminCustomers((prev) => {
-                    const existing = prev.find((c) => c.phone === buyer.mobile);
-                    if (existing) {
-                      return prev.map((c) =>
-                        c.phone === buyer.mobile
-                          ? { ...c, orders: c.orders + 1, address: deliveryAddress }
-                          : c
-                      );
-                    }
-                    return [
-                      ...prev,
-                      {
-                        id: Date.now(),
-                        name: buyer.name,
-                        phone: buyer.mobile,
-                        address: deliveryAddress,
-                        orders: 1,
-                        notes: deliveryComment || "",
-                        blocked: false,
-                      },
-                    ];
-                  });
+                  fetch("/api/checkout", {
+                    method: "POST",
+                    body: JSON.stringify({ buyer, cart, deliveryAddress, deliveryComment, subtotal }),
+                  }).then(res => res.json()).then(data => {
+                    setAdminOrders(prev => [...prev, data.order]);
+                    setAdminCustomers(prev => {
+                       const existing = prev.find(c => c.phone === data.customer.phone);
+                       if (existing) return prev.map(c => c.phone === data.customer.phone ? data.customer : c);
+                       return [...prev, data.customer];
+                    });
+                  }).catch(console.error);
                 }
 
                 setMessage(

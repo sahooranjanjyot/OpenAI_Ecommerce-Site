@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  category    String
+  price       Float
+  wasPrice    Float?
+  onSale      Boolean  @default(false)
+  promo       String?
+  stock       Int      @default(0)
+  unit        String   @default("numbers")
+  image       String?
+  description String?
+  enabled     Boolean  @default(true)
+  hidden      Boolean  @default(false)
+  featured    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String   @unique
+  address   String?
+  orders    Int      @default(0)
+  notes     String?
+  blocked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Order     Order[]
+}
+
+model Order {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+  status     String   @default("new")
+  total      Float
+  items      String
+  address    String?
+  createdAt  DateTime @default(now())
+}
+
+model Promo {
+  id        Int      @id @default(autoincrement())
+  type      String
+  target    String
+  start     String
+  end       String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
