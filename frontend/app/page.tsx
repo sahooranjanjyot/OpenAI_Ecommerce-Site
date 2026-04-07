@@ -34,7 +34,6 @@ const productsSeed: Product[] = [
 
 export default function GroceryUATReadyApp() {
   const [route, setRoute] = useState<"store" | "sale" | "buyer" | "admin" | "checkout">("store");
-  const [products] = useState(productsSeed);
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [sortBy, setSortBy] = useState<string>("default");
@@ -64,9 +63,23 @@ export default function GroceryUATReadyApp() {
   const [paymentOtp, setPaymentOtp] = useState("");
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [checkoutEmail, setCheckoutEmail] = useState("");
-  const [adminProducts] = useState(productsSeed);
+  const [adminProducts, setAdminProducts] = useState<(Product & { enabled?: boolean; featured?: boolean; hidden?: boolean; image?: string; unit?: string })[]>(
+    productsSeed.map((p) => ({ ...p, enabled: true, featured: false, hidden: false, image: "", unit: "numbers" }))
+  );
+  const products = adminProducts.filter(p => !p.hidden && p.enabled !== false);
+  const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
+  const [editForm, setEditForm] = useState<any>({});
   const [catalogSearch, setCatalogSearch] = useState("");
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
+
+  const [adminTab, setAdminTab] = useState("Catalog");
+  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [promos, setPromos] = useState([{ id: 1, type: "BOGO", target: "Potato Chips", active: true, start: "2026-04-01", end: "2026-04-15" }]);
+  const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "" });
+  const [adminOrders, setAdminOrders] = useState([{ id: 101, customer: "Mrs Smith", status: "new", total: 12.5, items: "Bananas x2, Milk x1", phone: "1234567890" }, { id: 102, customer: "John Doe", status: "delivered", total: 4.5, items: "Basmati Rice x1", phone: "0987654321" }]);
+  const [adminCustomers, setAdminCustomers] = useState([{ id: 1, name: "Mrs Smith", phone: "1234567890", address: "10 Downing St", orders: 5, notes: "orders rice every week", blocked: false }]);
+  const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
 
   const visible = useMemo(() => {
     let list = route === "sale" ? products.filter((p) => p.onSale) : products;
@@ -215,24 +228,38 @@ export default function GroceryUATReadyApp() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        overflow: "hidden",
         display: "grid",
         gridTemplateColumns: "220px 1fr 300px",
         background: "#0b132b",
         color: "white",
+        boxSizing: "border-box",
       }}
     >
-      <aside style={{ padding: 20, borderRight: "1px solid #334155" }}>
+      <style>{`
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+      `}</style>
+
+      <aside style={{ padding: 20, borderRight: "1px solid #334155", overflowY: "auto" }}>
         <h3>🛒 Grocery OS</h3>
 
         <Btn
           label={productsExpanded ? "Products ▼" : "Products ▶"}
-          onClick={() => setProductsExpanded((v) => !v)}
+          onClick={() => {
+            setRoute("store");
+            setSelectedCategory("All");
+            setProductsExpanded((v) => !v);
+          }}
         />
 
         {productsExpanded && (
           <div style={{ margin: "6px 0 14px 0", display: "grid", gap: 6 }}>
             {[
+              "All",
               "Flour",
               "Rice",
               "Vegetables",
@@ -278,7 +305,7 @@ export default function GroceryUATReadyApp() {
         />
       </aside>
 
-      <main style={{ padding: 24 }}>
+      <main style={{ padding: 24, paddingBottom: 0, height: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box", overflow: "hidden" }}>
         {message && (
           <div
             style={{
@@ -293,8 +320,8 @@ export default function GroceryUATReadyApp() {
         )}
 
         {(route === "store" || route === "sale") && (
-          <>
-            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+            <div style={{ display: "flex", gap: 12, marginBottom: 20, flexShrink: 0 }}>
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -327,9 +354,14 @@ export default function GroceryUATReadyApp() {
 
             <div
               style={{
+                flex: 1,
+                overflowY: "auto",
+                paddingRight: 8,
+                paddingBottom: 24,
+                alignContent: "start",
                 display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: 16,
+                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                gap: 12,
               }}
             >
               {visible.map((p) => (
@@ -337,90 +369,103 @@ export default function GroceryUATReadyApp() {
                   key={p.id}
                   style={{
                     border: "1px solid #334155",
-                    borderRadius: 12,
-                    padding: 10,
+                    borderRadius: 10,
+                    padding: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    fontSize: 13,
                   }}
                 >
                   <div
                     style={{
-                      height: 84,
-                      borderRadius: 10,
+                      height: 60,
+                      borderRadius: 6,
                       background: "#1e293b",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      marginBottom: 12,
+                      marginBottom: 8,
                       color: "#94a3b8",
+                      fontSize: 11,
                     }}
                   >
                     Product Image
                   </div>
 
-                  <h3>{p.name}</h3>
-                  <div>{p.category}</div>
-                  <div>Stock: {p.stock}</div>
+                  <strong style={{ fontSize: 14 }}>{p.name}</strong>
+                  <div style={{ color: "#94a3b8", marginBottom: 2 }}>{p.category} • Stock: {p.stock}</div>
 
-                  <div>
+                  <div style={{ marginBottom: 4 }}>
                     {!(p.promo === "BOGO" || p.promo === "4 for 3") &&
                       p.wasPrice && (
                         <span
                           style={{
                             textDecoration: "line-through",
-                            marginRight: 8,
+                            marginRight: 6,
+                            color: "#94a3b8",
+                            fontSize: 12,
                           }}
                         >
                           £{p.wasPrice.toFixed(2)}
                         </span>
                       )}
-                    <strong>£{p.price.toFixed(2)}</strong>
+                    <strong style={{ color: "#38bdf8" }}>£{p.price.toFixed(2)}</strong>
                   </div>
 
-                  {p.promo && <div style={{ color: "#86efac" }}>{p.promo}</div>}
+                  {p.promo && <div style={{ color: "#86efac", fontWeight: 600 }}>{p.promo}</div>}
                   {p.promo === "BOGO" && (
-                    <div style={{ fontSize: 12, color: "#93c5fd" }}>
-                      Buy 1, get 1 free (charged as 1 of every 2)
-                    </div>
+                    <div style={{ fontSize: 11, color: "#93c5fd" }}>Buy 1, get 1 free</div>
                   )}
                   {p.promo === "4 for 3" && (
-                    <div style={{ fontSize: 12, color: "#93c5fd" }}>
-                      Every 4th item is free
-                    </div>
+                    <div style={{ fontSize: 11, color: "#93c5fd" }}>Every 4th item free</div>
                   )}
 
-                  <div
-                    style={{
-                      marginTop: 10,
-                      display: "flex",
-                      gap: 10,
-                      alignItems: "center",
-                    }}
-                  >
-                    <button
-                      onClick={() => decreaseQty(p.id)}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 8,
-                        background: "#334155",
-                        color: "white",
-                        border: 0,
-                        cursor: "pointer",
-                      }}
-                    >
-                      −
-                    </button>
+                  <div style={{ marginTop: "auto", paddingTop: 10 }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => decreaseQty(p.id)}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 6,
+                          background: "#334155",
+                          color: "white",
+                          border: 0,
+                          cursor: "pointer",
+                        }}
+                      >
+                        −
+                      </button>
 
-                    <Btn label="Add to Cart" onClick={() => addToCart(p)} />
-
-                    <span>In cart: {cart.find((x) => x.id === p.id)?.qty || 0}</span>
+                      <button
+                        onClick={() => addToCart(p)}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          borderRadius: 6,
+                          background: "#2563eb",
+                          color: "white",
+                          border: 0,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {cart.find((x) => x.id === p.id)?.qty ? (
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
+                        In cart: {cart.find((x) => x.id === p.id)?.qty}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
             </div>
-          </>
+          </div>
         )}
 
         {route === "admin" && (
-          <div style={{ maxWidth: 720 }}>
+          <div style={{ maxWidth: 720, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
             <h2>Admin Secure Login</h2>
 
             {!adminLogged ? (
@@ -521,23 +566,11 @@ export default function GroceryUATReadyApp() {
                       ].map((x) => (
                         <button
                           key={x}
-                          onClick={() => {
-                            if (x === "Catalog") {
-                              setMessage("Catalog dashboard opened");
-                            } else if (x === "Add Product") {
-                              setMessage("Add Product workflow launched");
-                            } else if (x === "Inventory Update") {
-                              setMessage("Inventory update panel opened");
-                            } else if (x === "Promo Engine") {
-                              setMessage("Promotion engine opened");
-                            } else if (x === "Orders") {
-                              setMessage("Orders dashboard opened");
-                            }
-                          }}
+                          onClick={() => setAdminTab(x)}
                           style={{
                             padding: 12,
                             borderRadius: 10,
-                            background: "#2563eb",
+                            background: adminTab === x ? "#1d4ed8" : "#2563eb",
                             color: "white",
                             border: 0,
                             cursor: "pointer",
@@ -549,6 +582,7 @@ export default function GroceryUATReadyApp() {
                       ))}
                     </div>
 
+                    {adminTab === "Catalog" && (
                     <div
                       style={{
                         padding: 16,
@@ -558,17 +592,36 @@ export default function GroceryUATReadyApp() {
                     >
                       <h3 style={{ marginBottom: 12 }}>Catalog & Product Management</h3>
 
-                      <input
-                        value={catalogSearch}
-                        onChange={(e) => setCatalogSearch(e.target.value)}
-                        placeholder="Search SKU / product / category"
-                        style={{
-                          width: "100%",
-                          padding: 10,
-                          borderRadius: 8,
-                          marginBottom: 12,
-                        }}
-                      />
+                      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                        <input
+                          value={catalogSearch}
+                          onChange={(e) => setCatalogSearch(e.target.value)}
+                          placeholder="Search product name"
+                          style={{
+                            flex: 1,
+                            padding: 10,
+                            borderRadius: 8,
+                            border: "1px solid #334155",
+                            background: "transparent",
+                            color: "white"
+                          }}
+                        />
+                        <select
+                          value={adminCategoryFilter}
+                          onChange={(e) => setAdminCategoryFilter(e.target.value)}
+                          style={{
+                            padding: 10,
+                            borderRadius: 8,
+                            width: 150,
+                            border: "1px solid #334155",
+                            background: "#111827",
+                            color: "white"
+                          }}
+                        >
+                          <option value="All">All Categories</option>
+                          {Array.from(new Set(adminProducts.map(p => p.category))).map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
 
                       <div
                         style={{
@@ -579,15 +632,15 @@ export default function GroceryUATReadyApp() {
                       >
                         {adminProducts
                           .filter((p) => {
-                            if (!catalogSearch.trim()) return true;
-                            const q = catalogSearch.toLowerCase();
-                            return (
-                              p.name.toLowerCase().includes(q) ||
-                              p.category.toLowerCase().includes(q) ||
-                              String(p.id).includes(q)
-                            );
+                            let match = true;
+                            if (catalogSearch.trim()) {
+                              match = match && p.name.toLowerCase().includes(catalogSearch.toLowerCase());
+                            }
+                            if (adminCategoryFilter !== "All") {
+                              match = match && p.category === adminCategoryFilter;
+                            }
+                            return match;
                           })
-                          .slice(0, 6)
                           .map((p) => (
                             <div
                               key={p.id}
@@ -595,32 +648,418 @@ export default function GroceryUATReadyApp() {
                                 padding: 12,
                                 border: "1px solid #334155",
                                 borderRadius: 10,
+                                position: "relative",
                               }}
                             >
-                              <div>
-                                <strong>{p.name}</strong>
-                              </div>
-                              <div>{p.category}</div>
-                              <div>
-                                £{p.price.toFixed(2)} · Stock {p.stock}
-                              </div>
-                              <button
-                                onClick={() => setEditingProductId(p.id)}
-                                style={{
-                                  marginTop: 8,
-                                  padding: "6px 10px",
-                                  borderRadius: 8,
-                                  background: "#2563eb",
-                                  color: "white",
-                                  border: 0,
-                                }}
-                              >
-                                {editingProductId === p.id ? "Editing..." : "Edit Product"}
-                              </button>
+                              {editingProductId === p.id ? (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                  <input
+                                    value={editForm.name ?? p.name}
+                                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                                    placeholder="Name"
+                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                  />
+                                  <input
+                                    value={editForm.category ?? p.category}
+                                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                                    placeholder="Category"
+                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                  />
+                                  <div style={{ display: "flex", gap: 8 }}>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={editForm.price ?? p.price}
+                                      onChange={(e) => setEditForm({ ...editForm, price: parseFloat(e.target.value) || 0 })}
+                                      placeholder="Price"
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                    />
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={editForm.stock ?? p.stock}
+                                      onChange={(e) => setEditForm({ ...editForm, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                      placeholder="Stock"
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                    />
+                                    <select
+                                      value={editForm.unit ?? p.unit ?? "numbers"}
+                                      onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
+                                      style={{ padding: 6, borderRadius: 4, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                    >
+                                      {[
+                                        "numbers",
+                                        "100 Gm", "200 Gm", "300 Gms", "400 Gms", "500 Gms", "600 Gms", "700 Gms", "800 Gms", "900 Gms",
+                                        "1 KG", "2 KG", "3 KG", "4 KG", "5 KG", "6 KG", "7 KG", "8 KG", "9 KG", "10 KG", "20 KG",
+                                        "1 Ltr", "2 Ltr", "3 Ltr", "4 Ltr", "5 Ltrs"
+                                      ].map(u => <option key={u} value={u}>{u}</option>)}
+                                    </select>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={editForm.image ?? p.image ?? ""}
+                                    onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
+                                    placeholder="Image URL"
+                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                  />
+                                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                                    <input type="checkbox" checked={editForm.enabled ?? p.enabled ?? true} onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })} /> Enabled
+                                  </label>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                                    <input type="checkbox" checked={editForm.featured ?? p.featured ?? false} onChange={(e) => setEditForm({ ...editForm, featured: e.target.checked })} /> Featured
+                                  </label>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                                    <input type="checkbox" checked={editForm.hidden ?? p.hidden ?? false} onChange={(e) => setEditForm({ ...editForm, hidden: e.target.checked })} /> Hide in store
+                                  </label>
+
+                                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                                    <button
+                                      onClick={() => {
+                                        setAdminProducts(adminProducts.map(prod => prod.id === p.id ? { ...prod, ...editForm } : prod));
+                                        setEditingProductId(null);
+                                      }}
+                                      style={{ padding: "6px 10px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, flex: 1, cursor: "pointer" }}
+                                    >Save</button>
+                                    <button
+                                      onClick={() => setEditingProductId(null)}
+                                      style={{ padding: "6px 10px", borderRadius: 8, background: "#475569", color: "white", border: 0, flex: 1, cursor: "pointer" }}
+                                    >Cancel</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {p.image && <img src={p.image} alt={p.name} style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 6, marginBottom: 8 }} />}
+                                  <div>
+                                    <strong>{p.name}</strong>
+                                    {p.featured && <span style={{ marginLeft: 6, fontSize: 10, background: "#eab308", color: "black", padding: "2px 6px", borderRadius: 10 }}>Featured</span>}
+                                  </div>
+                                  <div>{p.category}</div>
+                                  <div>
+                                    £{p.price.toFixed(2)} · Stock {p.stock} {p.unit && p.unit !== "numbers" ? p.unit : ""}
+                                  </div>
+                                  <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+                                    Status: {p.enabled === false ? "Disabled" : "Enabled"} | Visibility: {p.hidden ? "Hidden" : "Visible"}
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                                    <button
+                                      onClick={() => {
+                                        setEditingProductId(p.id);
+                                        setEditForm({ name: p.name, category: p.category, price: p.price, stock: p.stock, unit: p.unit ?? "numbers", enabled: p.enabled ?? true, featured: p.featured ?? false, hidden: p.hidden ?? false, image: p.image ?? "" });
+                                      }}
+                                      style={{ padding: "6px 10px", borderRadius: 8, background: "#2563eb", color: "white", border: 0, flex: 1, cursor: "pointer" }}
+                                    >Edit</button>
+                                    <button
+                                      onClick={() => setAdminProducts(adminProducts.filter(prod => prod.id !== p.id))}
+                                      style={{ padding: "6px 10px", borderRadius: 8, background: "#dc2626", color: "white", border: 0, cursor: "pointer" }}
+                                    >Delete</button>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           ))}
                       </div>
                     </div>
+                    )}
+
+                    {adminTab === "Add Product" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <input placeholder="Product Name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                            <option value="" disabled>Select Category</option>
+                            {[
+                              "Fruits",
+                              "Vegetables",
+                              "Confectionery",
+                              "Sweets",
+                              "Snacks",
+                              "Rice",
+                              "Flour",
+                              "Oil",
+                              "Lentils",
+                              "Spices",
+                              "Frozen Item",
+                              "Beverages",
+                              "Other"
+                            ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                          </select>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <input type="number" min="0" placeholder="Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <input type="number" min="0" placeholder="Stock Quantity" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: Math.max(0, parseInt(e.target.value)||0).toString()})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              {[
+                                "numbers",
+                                "100 Gm", "200 Gm", "300 Gms", "400 Gms", "500 Gms", "600 Gms", "700 Gms", "800 Gms", "900 Gms",
+                                "1 KG", "2 KG", "3 KG", "4 KG", "5 KG", "6 KG", "7 KG", "8 KG", "9 KG", "10 KG", "20 KG",
+                                "1 Ltr", "2 Ltr", "3 Ltr", "4 Ltr", "5 Ltrs"
+                              ].map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                            <select value={newProduct.discount} onChange={e => setNewProduct({...newProduct, discount: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              <option value="0">No Discount</option>
+                              <option value="10">10% Off</option>
+                              <option value="20">20% Off</option>
+                              <option value="30">30% Off</option>
+                              <option value="40">40% Off</option>
+                              <option value="50">50% Off</option>
+                              <option value="60">60% Off</option>
+                            </select>
+                          </div>
+                          <input placeholder="Image URL" value={newProduct.image} onChange={e => setNewProduct({...newProduct, image: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          <textarea placeholder="Product Description" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", minHeight: 60 }} />
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button onClick={() => {
+                              const baseP = parseFloat(newProduct.price)||0;
+                              const discP = parseInt(newProduct.discount)||0;
+                              const p = { 
+                                id: Date.now(), 
+                                name: newProduct.name, 
+                                category: newProduct.category, 
+                                price: discP > 0 ? baseP * (1 - discP/100) : baseP,
+                                wasPrice: discP > 0 ? baseP : 0,
+                                onSale: discP > 0,
+                                stock: parseInt(newProduct.stock)||0, 
+                                unit: newProduct.unit, 
+                                image: newProduct.image, 
+                                enabled: true, hidden: false, featured: false 
+                              };
+                              setAdminProducts([...adminProducts, p]);
+                              setMessage("Product Published Instantly!");
+                              setNewProduct({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
+                            }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Inventory Update" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Stock Management</h3>
+                        <input placeholder="Search Inventory..." value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} style={{ padding: 10, borderRadius: 8, width: "100%", marginBottom: 12, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                        <div style={{ display: "grid", gap: 10 }}>
+                        {adminProducts.filter(p => p.name.toLowerCase().includes(inventorySearch.toLowerCase())).map(p => (
+                          <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", padding: 12, borderRadius: 8, flexWrap: "wrap", gap: 10 }}>
+                            <div>
+                              <strong>{p.name}</strong> 
+                              {p.stock < 10 && <span style={{ marginLeft: 8, color: "#f87171", fontSize: 12 }}>Low Stock!</span>}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 14 }}>Current: {p.stock}</span>
+                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod))} style={{ padding: "4px 10px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
+                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod))} style={{ padding: "4px 10px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
+                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: 0} : prod))} style={{ padding: "4px 10px", background: "#dc2626", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Out of Stock</button>
+                              <button onClick={() => setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 50} : prod))} style={{ padding: "4px 10px", background: "#16a34a", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Restock (+50)</button>
+                            </div>
+                          </div>
+                        ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Promo Engine" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Promo Engine</h3>
+                        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+                          <select value={newPromo.type} onChange={e => setNewPromo({...newPromo, type: e.target.value, target: e.target.value === "Weekend Sale" ? "All Store" : ""})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: "1 1 120px" }}>
+                            <option>BOGO</option>
+                            <option>Discount %</option>
+                            <option>Flat Price Drop</option>
+                            <option>Weekend Sale</option>
+                            <option>Category-wide Sale</option>
+                            <option>Product-specific Sale</option>
+                          </select>
+                          
+                          {newPromo.type === "Category-wide Sale" ? (
+                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
+                              <option value="" disabled>Select Category</option>
+                              {Array.from(new Set(adminProducts.map(p => p.category))).map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                              ))}
+                            </select>
+                          ) : newPromo.type === "Weekend Sale" ? (
+                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
+                              <option value="All Store">All Store</option>
+                            </select>
+                          ) : (
+                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
+                              <option value="" disabled>Select Product</option>
+                              {adminProducts.map(p => (
+                                <option key={p.id} value={p.name}>{p.name}</option>
+                              ))}
+                            </select>
+                          )}
+
+                          <input 
+                            type="date" 
+                            value={newPromo.start} 
+                            min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
+                            onChange={e => setNewPromo({...newPromo, start: e.target.value})} 
+                            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
+                            onDoubleClick={e => e.currentTarget.blur()}
+                            style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", colorScheme: "dark" }} 
+                          />
+                          <input 
+                            type="date" 
+                            value={newPromo.end} 
+                            min={newPromo.start || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
+                            onChange={e => setNewPromo({...newPromo, end: e.target.value})} 
+                            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
+                            onDoubleClick={e => e.currentTarget.blur()}
+                            style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", colorScheme: "dark" }} 
+                          />
+                          
+                          <button onClick={() => {
+                            if (!newPromo.target) {
+                              setMessage("Please select a target for your promo!");
+                              return;
+                            }
+                            if (!newPromo.start || !newPromo.end) {
+                              setMessage("Please select valid promo start and end dates.");
+                              return;
+                            }
+                            
+                            const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0];
+                            if (newPromo.start < localToday) {
+                              setMessage("Promo start date cannot be in the past!");
+                              return;
+                            }
+                            if (newPromo.end < newPromo.start) {
+                              setMessage("Promo end date cannot be earlier than its start date!");
+                              return;
+                            }
+                            
+                            setPromos([...promos, { id: Date.now(), ...newPromo, active: true }]);
+                            setMessage(`Promo on ${newPromo.target} successfully activated!`);
+                            setNewPromo({ type: "BOGO", target: "", start: "", end: "" });
+                          }} style={{ padding: "10px 16px", background: "#2563eb", color: "white", border: 0, borderRadius: 8, cursor: "pointer" }}>Add Promo</button>
+                        </div>
+                        
+                        <div style={{ display: "grid", gap: 10 }}>
+                        {promos.map(pr => (
+                          <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", padding: 12, borderRadius: 8, flexWrap: "wrap", gap: 10 }}>
+                            <div>
+                              <strong style={{ color: "#86efac" }}>{pr.type}</strong> on {pr.target} <br/>
+                              <span style={{ fontSize: 12, color: "#94a3b8" }}>{pr.start} to {pr.end}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button onClick={() => setPromos(promos.map(x => x.id === pr.id ? {...x, active: !x.active} : x))} style={{ padding: "6px 12px", background: pr.active ? "#16a34a" : "#475569", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>{pr.active ? "Active" : "Disabled"}</button>
+                              <button onClick={() => setPromos(promos.filter(x => x.id !== pr.id))} style={{ padding: "6px 12px", background: "#dc2626", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Orders" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Order Management</h3>
+                        <div style={{ display: "grid", gap: 12 }}>
+                        {adminOrders.map(o => (
+                          <div key={o.id} style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                              <strong>Order #{o.id} - {o.customer}</strong>
+                              <strong>£{o.total.toFixed(2)}</strong>
+                            </div>
+                            <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 12 }}>Items: {o.items}</div>
+                            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                              <select value={o.status} onChange={(e) => setAdminOrders(adminOrders.map(x => x.id === o.id ? {...x, status: e.target.value} : x))} style={{ padding: 8, borderRadius: 6, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                                <option value="new">New</option>
+                                <option value="accepted">Accepted</option>
+                                <option value="packed">Packed</option>
+                                <option value="out_for_delivery">Out for Delivery</option>
+                                <option value="delivered">Delivered</option>
+                                <option value="canceled">Canceled</option>
+                                <option value="failed_payment">Failed Payment</option>
+                                <option value="refund_request">Refund Request</option>
+                              </select>
+                              <button onClick={() => setMessage("Calling customer: " + o.phone)} style={{ padding: "8px 12px", background: "#0ea5e9", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Call Customer</button>
+                              <button onClick={() => setMessage("Invoice resent to customer.")} style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Resend Invoice</button>
+                            </div>
+                          </div>
+                        ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Customers" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Customer Management</h3>
+                        <div style={{ display: "grid", gap: 12 }}>
+                        {adminCustomers.map(c => (
+                          <div key={c.id} style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <strong>{c.name}</strong>
+                              <span>Orders: {c.orders}</span>
+                            </div>
+                            <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 8 }}>Phone: {c.phone} | Address: {c.address}</div>
+                            <div style={{ fontSize: 14, color: "#86efac", marginBottom: 12 }}>Note: {c.notes}</div>
+                            <div style={{ display: "flex", gap: 10 }}>
+                              <button onClick={() => setMessage(c.name + " marked for Loyalty Discount.")} style={{ padding: "8px 12px", background: "#16a34a", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Apply Loyalty Discount</button>
+                              <button onClick={() => setAdminCustomers(adminCustomers.map(x => x.id === c.id ? {...x, blocked: !x.blocked} : x))} style={{ padding: "8px 12px", background: c.blocked ? "#f87171" : "#dc2626", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>{c.blocked ? "Unblock" : "Block Customer"}</button>
+                            </div>
+                          </div>
+                        ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Alerts" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Daily Alerts</h3>
+                        <div style={{ display: "grid", gap: 10 }}>
+                        {adminAlerts.map(a => (
+                          <div key={a.id} style={{ padding: 12, borderRadius: 8, background: a.type === "critical" ? "#7f1d1d" : "#9a3412", color: "white", display: "flex", justifyContent: "space-between" }}>
+                            <span>{a.msg}</span>
+                            <button onClick={() => setAdminAlerts(adminAlerts.filter(x => x.id !== a.id))} style={{ background: "transparent", border: 0, color: "white", cursor: "pointer", fontWeight: "bold" }}>Dismiss</button>
+                          </div>
+                        ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {adminTab === "Analytics" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Shop Dash</h3>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Today Sales</div>
+                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£425.50</div>
+                          </div>
+                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Weekly Sales</div>
+                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£3,204.00</div>
+                          </div>
+                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Daily Orders Count</div>
+                            <div style={{ fontSize: 24, fontWeight: "bold" }}>48</div>
+                          </div>
+                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Average Basket Value</div>
+                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£16.20</div>
+                          </div>
+                        </div>
+                        
+                        <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                            <strong style={{ color: "#38bdf8" }}>Highest Revenue Category:</strong><br/>
+                            Fruits generated highest revenue this week
+                          </div>
+                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                            <strong style={{ color: "#f87171" }}>Stock Running Low:</strong><br/>
+                            4 Items require restocking
+                          </div>
+                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                            <strong style={{ color: "#4ade80" }}>Top Selling Product:</strong><br/>
+                            Bananas
+                          </div>
+                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                            <strong style={{ color: "#fbbf24" }}>Slow Moving Product:</strong><br/>
+                            Frozen Peas
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -629,7 +1068,7 @@ export default function GroceryUATReadyApp() {
         )}
 
         {route === "checkout" && (
-          <div style={{ maxWidth: 640 }}>
+          <div style={{ maxWidth: 640, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
             <h2>Checkout</h2>
 
             <p style={{ color: "#93c5fd", marginBottom: 8 }}>
@@ -679,11 +1118,8 @@ export default function GroceryUATReadyApp() {
               <select
                 onChange={(e) => setDeliveryAddress(e.target.value)}
                 style={{
-                  display: "block",
-                  padding: 12,
-                  marginBottom: 12,
-                  width: "100%",
-                  borderRadius: 10,
+                  display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
+                  background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                 }}
               >
                 <option value="">Use previously used address</option>
@@ -700,10 +1136,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setCheckoutPhone(e.target.value)}
               placeholder="Phone number for delivery updates"
               style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -711,11 +1145,8 @@ export default function GroceryUATReadyApp() {
               <select
                 onChange={(e) => setDeliveryComment(e.target.value)}
                 style={{
-                  display: "block",
-                  padding: 12,
-                  marginBottom: 12,
-                  width: "100%",
-                  borderRadius: 10,
+                  display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
+                  background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                 }}
               >
                 <option value="">Use previous instructions</option>
@@ -732,11 +1163,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setDeliveryAddress(e.target.value)}
               placeholder="Delivery address"
               style={{
-                width: "100%",
-                minHeight: 100,
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", minHeight: 100, padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -745,11 +1173,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setDeliveryComment(e.target.value)}
               placeholder="Additional delivery instructions / comments"
               style={{
-                width: "100%",
-                minHeight: 80,
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", minHeight: 80, padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -758,10 +1183,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setCheckoutEmail(e.target.value)}
               placeholder="Email for invoice / verification"
               style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -807,10 +1230,8 @@ export default function GroceryUATReadyApp() {
                 onChange={(e) => setPaymentOtp(e.target.value)}
                 placeholder="Enter payment OTP 654321"
                 style={{
-                  width: "100%",
-                  padding: 10,
-                  borderRadius: 8,
-                  marginBottom: 10,
+                  width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                  background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                 }}
               />
             )}
@@ -820,10 +1241,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setCardName(e.target.value)}
               placeholder="Name on card"
               style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -832,10 +1251,8 @@ export default function GroceryUATReadyApp() {
               onChange={(e) => setCardNumber(e.target.value)}
               placeholder="Card number"
               style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
+                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
@@ -851,13 +1268,13 @@ export default function GroceryUATReadyApp() {
                 value={cardExpiry}
                 onChange={(e) => setCardExpiry(e.target.value)}
                 placeholder="MM/YY"
-                style={{ padding: 10, borderRadius: 8 }}
+                style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
               />
               <input
                 value={cardCvv}
                 onChange={(e) => setCardCvv(e.target.value)}
                 placeholder="CVV"
-                style={{ padding: 10, borderRadius: 8 }}
+                style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
               />
             </div>
 
@@ -927,11 +1344,47 @@ export default function GroceryUATReadyApp() {
                       new Set([...(prev[buyer.mobile] || []), deliveryAddress])
                     ),
                   }));
+
+                  setAdminOrders((prev) => [
+                    ...prev,
+                    {
+                      id: Date.now(),
+                      customer: buyer.name,
+                      status: "new",
+                      total: subtotal,
+                      items: cart.map((c) => `${c.name} x${c.qty}`).join(", "),
+                      phone: buyer.mobile,
+                    },
+                  ]);
+
+                  setAdminCustomers((prev) => {
+                    const existing = prev.find((c) => c.phone === buyer.mobile);
+                    if (existing) {
+                      return prev.map((c) =>
+                        c.phone === buyer.mobile
+                          ? { ...c, orders: c.orders + 1, address: deliveryAddress }
+                          : c
+                      );
+                    }
+                    return [
+                      ...prev,
+                      {
+                        id: Date.now(),
+                        name: buyer.name,
+                        phone: buyer.mobile,
+                        address: deliveryAddress,
+                        orders: 1,
+                        notes: deliveryComment || "",
+                        blocked: false,
+                      },
+                    ];
+                  });
                 }
 
                 setMessage(
                   `Payment successful • card charged £${subtotal.toFixed(2)} • order placed`
                 );
+                setCart([]);
                 setRoute("store");
               }}
               style={{
@@ -951,7 +1404,7 @@ export default function GroceryUATReadyApp() {
         )}
 
         {route === "buyer" && (
-          <div style={{ maxWidth: 520 }}>
+          <div style={{ maxWidth: 520, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
             <h2>Buyer UAT Login</h2>
             <p style={{ color: "#94a3b8", marginBottom: 16 }}>
               First-time users register with OTP once. Future login requires only mobile.
@@ -964,11 +1417,8 @@ export default function GroceryUATReadyApp() {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Buyer name (first time only)"
                   style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: "100%",
-                    borderRadius: 10,
+                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
+                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                   }}
                 />
                 <input
@@ -976,11 +1426,8 @@ export default function GroceryUATReadyApp() {
                   onChange={(e) => setMobile(e.target.value)}
                   placeholder="Mobile number"
                   style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: "100%",
-                    borderRadius: 10,
+                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
+                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                   }}
                 />
                 <Btn
@@ -995,11 +1442,8 @@ export default function GroceryUATReadyApp() {
                   onChange={(e) => setOtp(e.target.value)}
                   placeholder="Enter OTP (123456)"
                   style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: "100%",
-                    borderRadius: 10,
+                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
+                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
                   }}
                 />
                 <Btn label="Verify OTP" onClick={verifyOtp} />
@@ -1009,7 +1453,7 @@ export default function GroceryUATReadyApp() {
         )}
       </main>
 
-      <aside style={{ padding: 20, borderLeft: "1px solid #334155" }}>
+      <aside style={{ padding: 20, borderLeft: "1px solid #334155", overflowY: "auto" }}>
         <h3>Cart</h3>
 
         {cart.length === 0 ? (
