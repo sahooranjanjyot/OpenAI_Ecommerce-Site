@@ -20,6 +20,10 @@ export async function POST(req: Request) {
         start: body.start,
         end: body.end,
         active: body.active,
+        buyX: body.buyX ? parseInt(body.buyX) : null,
+        payY: body.payY ? parseInt(body.payY) : null,
+        crossTarget: body.crossTarget || null,
+        crossDiscount: body.crossDiscount ? parseInt(body.crossDiscount) : null,
       },
     });
     return NextResponse.json(data);

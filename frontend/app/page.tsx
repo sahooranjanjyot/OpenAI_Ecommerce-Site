@@ -70,11 +70,11 @@ export default function GroceryUATReadyApp() {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
 
-  const [adminTab, setAdminTab] = useState("Catalog");
-  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
+  const [adminTab, setAdminTab] = useState("Add/Edit/Inventory");
+  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
   const [inventorySearch, setInventorySearch] = useState("");
   const [promos, setPromos] = useState<any[]>([]);
-  const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "" });
+  const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "", buyX: "", payY: "", crossTarget: "", crossDiscount: "" });
   const [adminOrders, setAdminOrders] = useState<any[]>([]);
   const [adminCustomers, setAdminCustomers] = useState<any[]>([]);
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
@@ -147,34 +147,86 @@ export default function GroceryUATReadyApp() {
     );
   };
 
-  const getLineTotal = (item: Product & { qty: number }) => {
-    if (item.promo === "BOGO") {
-      const payableQty = Math.ceil(item.qty / 2);
-      return payableQty * item.price;
-    }
-    if (item.promo === "4 for 3") {
-      const bundles = Math.floor(item.qty / 4);
-      const remainder = item.qty % 4;
-      return bundles * (3 * item.price) + remainder * item.price;
-    }
-    return item.qty * item.price;
+  const calculateCartTotals = () => {
+    let _subtotal = 0;
+    let _savings = 0;
+    const itemsMap: Record<number, { total: number; savings: number }> = {};
+    const activePromos = promos.filter(p => p.active);
+
+    cart.forEach(item => {
+      let itemTotal = item.qty * item.price;
+      let itemSavings = 0;
+
+      if (item.promo === "BOGO" || item.promo?.includes("BOGO")) {
+        const free = Math.floor(item.qty / 2);
+        itemSavings += free * item.price;
+        itemTotal -= free * item.price;
+      } else if (item.promo === "Discount 50%") {
+        itemSavings += (item.price * 0.5) * item.qty;
+        itemTotal -= (item.price * 0.5) * item.qty;
+      } else if (item.promo?.startsWith("Buy ")) {
+        const match = item.promo.match(/Buy (\d+) Pay (\d+)/);
+        if (match) {
+          const buyX = parseInt(match[1]);
+          const payY = parseInt(match[2]);
+          if (buyX > 0 && payY >= 0 && buyX > payY) {
+            const bundles = Math.floor(item.qty / buyX);
+            const freeItems = bundles * (buyX - payY);
+            if (freeItems > 0) {
+              itemSavings += freeItems * item.price;
+              itemTotal -= freeItems * item.price;
+            }
+          }
+        }
+      }
+
+      const multibuy = activePromos.find(p => p.type === "Multibuy (Buy X Pay Y)" && (p.target === item.name || p.target === item.category || p.target === "All Store"));
+      if (multibuy && multibuy.buyX && multibuy.payY) {
+        const bundles = Math.floor(item.qty / multibuy.buyX);
+        const freeItems = bundles * (multibuy.buyX - multibuy.payY);
+        if (freeItems > 0) {
+          itemSavings += freeItems * item.price;
+          itemTotal -= freeItems * item.price;
+        }
+      }
+
+      const crossSellTrigger = activePromos.find(p => p.type === "Cross-Sell Product Bundle" && p.target === item.name);
+      if (crossSellTrigger && crossSellTrigger.crossTarget && crossSellTrigger.crossDiscount) {
+        const discountedItemInCart = cart.find(c => c.name === crossSellTrigger.crossTarget);
+        if (discountedItemInCart) {
+          const maxDiscountableQty = Math.min(item.qty, discountedItemInCart.qty);
+          const discountAmt = (discountedItemInCart.price * (crossSellTrigger.crossDiscount / 100)) * maxDiscountableQty;
+          _savings += discountAmt;
+          _subtotal -= discountAmt; 
+          // Inject saving tag onto discounted item dynamically
+          if (itemsMap[discountedItemInCart.id]) {
+            itemsMap[discountedItemInCart.id].savings += discountAmt;
+            itemsMap[discountedItemInCart.id].total -= discountAmt;
+          } else {
+            itemsMap[discountedItemInCart.id] = { total: (discountedItemInCart.price * discountedItemInCart.qty) - discountAmt, savings: discountAmt };
+          }
+        }
+      }
+
+      if (item.wasPrice && item.wasPrice > item.price) {
+        itemSavings += item.qty * (item.wasPrice - item.price);
+      }
+
+      _subtotal += itemTotal;
+      _savings += itemSavings;
+      
+      if (!itemsMap[item.id]) {
+        itemsMap[item.id] = { total: itemTotal, savings: itemSavings };
+      } else {
+        itemsMap[item.id].total += itemTotal - (item.price * item.qty);
+        itemsMap[item.id].savings += itemSavings;
+      }
+    });
+
+    return { subtotal: _subtotal, totalSavings: _savings, itemsMap };
   };
 
-  const getLineSavings = (item: Product & { qty: number }) => {
-    if (item.promo === "BOGO") {
-      return Math.floor(item.qty / 2) * item.price;
-    }
-    if (item.promo === "4 for 3") {
-      return Math.floor(item.qty / 4) * item.price;
-    }
-    if (item.wasPrice && item.wasPrice > item.price) {
-      return item.qty * (item.wasPrice - item.price);
-    }
-    return 0;
-  };
-
-  const subtotal = cart.reduce((s, x) => s + getLineTotal(x), 0);
-  const totalSavings = cart.reduce((s, x) => s + getLineSavings(x), 0);
+  const { subtotal, totalSavings, itemsMap } = calculateCartTotals();
 
   const registerOrLoginBuyer = () => {
     if (!mobile) {
@@ -219,18 +271,19 @@ export default function GroceryUATReadyApp() {
     setRoute("store");
   };
 
-  const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
+  const Btn = ({ label, onClick, active }: { label: string; onClick: () => void; active?: boolean }) => (
     <button
       onClick={onClick}
       style={{
         padding: "10px 14px",
         borderRadius: 10,
-        background: "#2563eb",
-        color: "white",
-        border: 0,
+        background: active ? "#2563eb" : "transparent",
+        color: active ? "white" : "#cbd5e1",
+        border: active ? "1px solid #2563eb" : "1px solid #334155",
         cursor: "pointer",
         marginBottom: 10,
         width: "100%",
+        textAlign: "left",
       }}
     >
       {label}
@@ -243,7 +296,7 @@ export default function GroceryUATReadyApp() {
         height: "100vh",
         overflow: "hidden",
         display: "grid",
-        gridTemplateColumns: "220px 1fr 300px",
+        gridTemplateColumns: route === "admin" ? "220px 1fr" : "220px 1fr 300px",
         background: "#0b132b",
         color: "white",
         boxSizing: "border-box",
@@ -260,9 +313,11 @@ export default function GroceryUATReadyApp() {
         <h3>🛒 Grocery OS</h3>
 
         <Btn
+          active={route === "store"}
           label={productsExpanded ? "Products ▼" : "Products ▶"}
           onClick={() => {
             setRoute("store");
+            setMessage("");
             setSelectedCategory("All");
             setProductsExpanded((v) => !v);
           }}
@@ -288,12 +343,13 @@ export default function GroceryUATReadyApp() {
                 key={cat}
                 onClick={() => {
                   setRoute("store");
+                  setMessage("");
                   setSelectedCategory(cat);
                 }}
                 style={{
                   textAlign: "left",
-                  background: selectedCategory === cat ? "#1d4ed8" : "transparent",
-                  color: "#cbd5e1",
+                  background: route === "store" && selectedCategory === cat ? "#1d4ed8" : "transparent",
+                  color: route === "store" && selectedCategory === cat ? "white" : "#cbd5e1",
                   border: "1px solid #334155",
                   borderRadius: 8,
                   padding: "8px 10px",
@@ -306,14 +362,16 @@ export default function GroceryUATReadyApp() {
           </div>
         )}
 
-        <Btn label="Sale" onClick={() => setRoute("sale")} />
+        <Btn active={route === "sale"} label="Sale" onClick={() => { setRoute("sale"); setMessage(""); }} />
         <Btn
+          active={route === "buyer"}
           label={buyer ? `Buyer: ${buyer.name}` : "Buyer Login"}
-          onClick={() => setRoute("buyer")}
+          onClick={() => { setRoute("buyer"); setMessage(""); }}
         />
         <Btn
+          active={route === "admin"}
           label={adminLogged ? "Admin Logged In" : "Admin Login"}
-          onClick={() => setRoute("admin")}
+          onClick={() => { setRoute("admin"); setMessage(""); }}
         />
       </aside>
 
@@ -388,28 +446,34 @@ export default function GroceryUATReadyApp() {
                     fontSize: 13,
                   }}
                 >
-                  <div
-                    style={{
-                      height: 60,
-                      borderRadius: 6,
-                      background: "#1e293b",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      marginBottom: 8,
-                      color: "#94a3b8",
-                      fontSize: 11,
-                    }}
-                  >
-                    Product Image
-                  </div>
+                  {p.image ? (
+                    <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                  ) : (
+                    <div
+                      style={{
+                        height: 120,
+                        borderRadius: 6,
+                        background: "#1e293b",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: 8,
+                        color: "#94a3b8",
+                        fontSize: 11,
+                      }}
+                    >
+                      Product Image
+                    </div>
+                  )}
 
                   <strong style={{ fontSize: 14 }}>{p.name}</strong>
-                  <div style={{ color: "#94a3b8", marginBottom: 2 }}>{p.category} • Stock: {p.stock}</div>
+                  <div style={{ color: "#94a3b8", marginBottom: 2 }}>
+                    {p.category} {p.stock <= 10 ? <span style={{ color: "#ef4444", fontWeight: "bold" }}> • {p.stock === 0 ? "Out of Stock" : `Only ${p.stock} left in stock!`}</span> : ""}
+                  </div>
 
                   <div style={{ marginBottom: 4 }}>
-                    {!(p.promo === "BOGO" || p.promo === "4 for 3") &&
-                      p.wasPrice && (
+                    {!(p.promo === "BOGO") &&
+                      p.wasPrice > 0 && (
                         <span
                           style={{
                             textDecoration: "line-through",
@@ -424,13 +488,7 @@ export default function GroceryUATReadyApp() {
                     <strong style={{ color: "#38bdf8" }}>£{p.price.toFixed(2)}</strong>
                   </div>
 
-                  {p.promo && <div style={{ color: "#86efac", fontWeight: 600 }}>{p.promo}</div>}
-                  {p.promo === "BOGO" && (
-                    <div style={{ fontSize: 11, color: "#93c5fd" }}>Buy 1, get 1 free</div>
-                  )}
-                  {p.promo === "4 for 3" && (
-                    <div style={{ fontSize: 11, color: "#93c5fd" }}>Every 4th item free</div>
-                  )}
+                  {p.promo && <div style={{ color: "#86efac", fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{p.promo}</div>}
 
                   <div style={{ marginTop: "auto", paddingTop: 10 }}>
                     <div style={{ display: "flex", gap: 6 }}>
@@ -477,7 +535,7 @@ export default function GroceryUATReadyApp() {
         )}
 
         {route === "admin" && (
-          <div style={{ maxWidth: 720, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
+          <div style={{ flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24, width: "100%" }}>
             {!adminLogged && <h2>Admin Secure Login</h2>}
 
             {!adminLogged ? (
@@ -565,10 +623,7 @@ export default function GroceryUATReadyApp() {
                       }}
                     >
                       {[
-                        "Catalog",
-                        "Add Product",
-                        "Inventory Update",
-                        "Promo Engine",
+                        "Add/Edit/Inventory",
                         "Orders",
                         "Customers",
                         "Alerts",
@@ -592,7 +647,7 @@ export default function GroceryUATReadyApp() {
                       ))}
                     </div>
 
-                    {adminTab === "Catalog" && (
+                    {adminTab === "Add/Edit/Inventory" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                     <div
                       style={{
                         padding: 16,
@@ -600,8 +655,6 @@ export default function GroceryUATReadyApp() {
                         borderRadius: 12,
                       }}
                     >
-                      <h3 style={{ marginBottom: 12 }}>Catalog & Product Management</h3>
-
                       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                         <input
                           value={catalogSearch}
@@ -636,8 +689,8 @@ export default function GroceryUATReadyApp() {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "repeat(2, minmax(0,1fr))",
-                          gap: 10,
+                          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                          gap: 12,
                         }}
                       >
                         {adminProducts
@@ -656,7 +709,7 @@ export default function GroceryUATReadyApp() {
                               key={p.id}
                               style={{
                                 padding: 12,
-                                border: "1px solid #334155",
+                                border: p.stock < 10 ? "2px solid #ef4444" : "1px solid #334155",
                                 borderRadius: 10,
                                 position: "relative",
                               }}
@@ -699,29 +752,33 @@ export default function GroceryUATReadyApp() {
                                     >
                                       {[
                                         "numbers",
-                                        "100 Gm", "200 Gm", "300 Gms", "400 Gms", "500 Gms", "600 Gms", "700 Gms", "800 Gms", "900 Gms",
-                                        "1 KG", "2 KG", "3 KG", "4 KG", "5 KG", "6 KG", "7 KG", "8 KG", "9 KG", "10 KG", "20 KG",
-                                        "1 Ltr", "2 Ltr", "3 Ltr", "4 Ltr", "5 Ltrs"
+                                        "Gm", "Kg", "ml", "Ltr"
                                       ].map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
                                   </div>
-                                  <select 
-                                    value={editForm.promo ?? p.promo ?? ""} 
-                                    onChange={e => setEditForm({ ...editForm, promo: e.target.value, onSale: e.target.value !== "" })}
-                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
-                                  >
-                                    <option value="">No Active Promo</option>
-                                    <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
-                                    <option value="Discount 50%">50% Discount</option>
-                                    <option value="Clearance">Clearance</option>
-                                  </select>
-                                  <input
-                                    type="text"
-                                    value={editForm.image ?? p.image ?? ""}
-                                    onChange={(e) => setEditForm({ ...editForm, image: e.target.value })}
-                                    placeholder="Image URL"
-                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
-                                  />
+                                  <select
+                                      value={editForm.promo ?? p.promo ?? ""} 
+                                      onChange={e => setEditForm({ ...editForm, promo: e.target.value, onSale: e.target.value !== "" })}
+                                      style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                    >
+                                      <option value="">No Active Promo</option>
+                                      <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
+                                      <option value="Discount 50%">50% Discount</option>
+                                      <option value="Buy 3 Pay 2">Buy 3 Pay 2</option>
+                                      <option value="Buy 4 Pay 3">Buy 4 Pay 3</option>
+                                      <option value="Buy 5 Pay 4">Buy 5 Pay 4</option>
+                                      <option value="Clearance">Clearance</option>
+                                    </select>
+                                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                    <label style={{ background: "#475569", padding: "6px 12px", borderRadius: 4, cursor: "pointer", fontSize: 13 }}>
+                                      Upload Photo
+                                      <input type="file" hidden accept="image/*" onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) { const r = new FileReader(); r.onload=()=>setEditForm({...editForm, image: r.result as string}); r.readAsDataURL(f); }
+                                      }} />
+                                    </label>
+                                    {(editForm.image ?? p.image) && <span style={{ fontSize: 12, color: "#86efac" }}>✓ Photo Ready</span>}
+                                  </div>
                                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
                                     <input type="checkbox" checked={editForm.enabled ?? p.enabled ?? true} onChange={(e) => setEditForm({ ...editForm, enabled: e.target.checked })} /> Enabled
                                   </label>
@@ -735,9 +792,19 @@ export default function GroceryUATReadyApp() {
                                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                                     <button
                                       onClick={() => {
+                                        const finalName = editForm.name !== undefined ? editForm.name : p.name;
+                                        const finalCategory = editForm.category !== undefined ? editForm.category : p.category;
+                                        const finalPrice = editForm.price !== undefined ? editForm.price : p.price;
+                                        
+                                        if (!finalName || !finalCategory || parseFloat(finalPrice) <= 0 || (editForm.image === "")) {
+                                          setMessage("Error: Name, Category, valid Price, and Image are required!");
+                                          return;
+                                        }
+
                                         setAdminProducts(adminProducts.map(prod => prod.id === p.id ? { ...prod, ...editForm } : prod));
                                         fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, ...editForm }) });
                                         setEditingProductId(null);
+                                        setMessage("Product Updated!");
                                       }}
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, flex: 1, cursor: "pointer" }}
                                     >Save</button>
@@ -749,14 +816,21 @@ export default function GroceryUATReadyApp() {
                                 </div>
                               ) : (
                                 <>
-                                  {p.image && <img src={p.image} alt={p.name} style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 6, marginBottom: 8 }} />}
+                                  {p.image ? (
+                                    <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                                  ) : (
+                                    <div style={{ height: 120, borderRadius: 6, background: "#1e293b", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8, color: "#94a3b8", fontSize: 11 }}>
+                                      Product Image
+                                    </div>
+                                  )}
                                   <div>
                                     <strong>{p.name}</strong>
                                     {p.featured && <span style={{ marginLeft: 6, fontSize: 10, background: "#eab308", color: "black", padding: "2px 6px", borderRadius: 10 }}>Featured</span>}
                                   </div>
                                   <div>{p.category}</div>
                                   <div>
-                                    £{p.price.toFixed(2)} · Stock {p.stock} {p.unit && p.unit !== "numbers" ? p.unit : ""}
+                                    £{p.price.toFixed(2)} {p.unit && p.unit !== "numbers" ? " · " + p.unit : ""}
+                                    {p.stock < 10 && <span style={{ marginLeft: 6, fontSize: 10, background: "#7f1d1d", color: "#fca5a5", padding: "2px 6px", borderRadius: 10 }}>Low Stock</span>}
                                     {p.promo && <span style={{ marginLeft: 6, fontSize: 10, background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 10 }}>{p.promo}</span>}
                                   </div>
                                   
@@ -797,9 +871,6 @@ export default function GroceryUATReadyApp() {
                           ))}
                       </div>
                     </div>
-                    )}
-
-                    {adminTab === "Add Product" && (
                       <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                         <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -825,38 +896,51 @@ export default function GroceryUATReadyApp() {
                           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                             <input type="number" min="0" placeholder="Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <input type="number" min="0" placeholder="Stock Quantity" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: Math.max(0, parseInt(e.target.value)||0).toString()})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
                               {[
                                 "numbers",
-                                "100 Gm", "200 Gm", "300 Gms", "400 Gms", "500 Gms", "600 Gms", "700 Gms", "800 Gms", "900 Gms",
-                                "1 KG", "2 KG", "3 KG", "4 KG", "5 KG", "6 KG", "7 KG", "8 KG", "9 KG", "10 KG", "20 KG",
-                                "1 Ltr", "2 Ltr", "3 Ltr", "4 Ltr", "5 Ltrs"
+                                "Gm", "Kg", "ml", "Ltr"
                               ].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
-                            <select value={newProduct.discount} onChange={e => setNewProduct({...newProduct, discount: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                              <option value="0">No Discount</option>
-                              <option value="10">10% Off</option>
-                              <option value="20">20% Off</option>
-                              <option value="30">30% Off</option>
-                              <option value="40">40% Off</option>
-                              <option value="50">50% Off</option>
-                              <option value="60">60% Off</option>
+                            <select value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              <option value="">No Active Promo</option>
+                              <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
+                              <option value="Discount 50%">50% Discount</option>
+                              <option value="Buy 3 Pay 2">Buy 3 Pay 2</option>
+                              <option value="Buy 4 Pay 3">Buy 4 Pay 3</option>
+                              <option value="Buy 5 Pay 4">Buy 5 Pay 4</option>
+                              <option value="Clearance">Clearance</option>
                             </select>
                           </div>
-                          <input placeholder="Image URL" value={newProduct.image} onChange={e => setNewProduct({...newProduct, image: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "4px 0" }}>
+                            <label style={{ background: "#334155", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, border: "1px solid #475569", flexShrink: 0 }}>
+                              📁 Upload Product Photo
+                              <input type="file" hidden accept="image/*" onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) { const r = new FileReader(); r.onload=()=>setNewProduct({...newProduct, image: r.result as string}); r.readAsDataURL(f); }
+                              }} />
+                            </label>
+                            {newProduct.image && <span style={{ color: "#86efac", fontWeight: "bold" }}>✓ Photo Attached</span>}
+                          </div>
                           <textarea placeholder="Product Description" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", minHeight: 60 }} />
                           <div style={{ display: "flex", gap: 10 }}>
                             <button onClick={() => {
                               const baseP = parseFloat(newProduct.price)||0;
-                              const discP = parseInt(newProduct.discount)||0;
+                              if (!newProduct.name || !newProduct.category || baseP <= 0 || newProduct.stock === "" || !newProduct.image || !newProduct.description) {
+                                setMessage("Wait! All fields except Promo are required to publish safely.");
+                                return;
+                              }
+                              
                               const p = { 
                                 name: newProduct.name, 
                                 category: newProduct.category, 
-                                price: discP > 0 ? baseP * (1 - discP/100) : baseP,
-                                wasPrice: discP > 0 ? baseP : 0,
-                                onSale: discP > 0,
+                                price: baseP,
+                                wasPrice: 0,
+                                onSale: newProduct.promo !== "",
+                                promo: newProduct.promo,
                                 stock: parseInt(newProduct.stock)||0, 
-                                unit: newProduct.unit, 
+                                unit: newProduct.unit === "numbers" ? "numbers" : `${newProduct.unitSize} ${newProduct.unit}`, 
                                 image: newProduct.image, 
                                 description: newProduct.description,
                                 enabled: true, hidden: false, featured: false 
@@ -868,152 +952,12 @@ export default function GroceryUATReadyApp() {
                               }).then(r => r.json()).then(data => setAdminProducts([...adminProducts, data]));
                               
                               setMessage("Product Published to Database!");
-                              setNewProduct({ name: "", category: "", price: "", stock: "", unit: "numbers", image: "", discount: "0", description: "" });
+                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
                             }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
                           </div>
                         </div>
                       </div>
-                    )}
-
-                    {adminTab === "Inventory Update" && (
-                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Stock Management</h3>
-                        <input placeholder="Search Inventory..." value={inventorySearch} onChange={e => setInventorySearch(e.target.value)} style={{ padding: 10, borderRadius: 8, width: "100%", marginBottom: 12, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                        <div style={{ display: "grid", gap: 10 }}>
-                        {adminProducts.filter(p => p.name.toLowerCase().includes(inventorySearch.toLowerCase())).map(p => (
-                          <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", padding: 12, borderRadius: 8, flexWrap: "wrap", gap: 10 }}>
-                            <div>
-                              <strong>{p.name}</strong> 
-                              {p.stock < 10 && <span style={{ marginLeft: 8, color: "#f87171", fontSize: 12 }}>Low Stock!</span>}
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                              <span style={{ fontSize: 14 }}>Current: {p.stock}</span>
-                              <button onClick={() => {
-                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod));
-                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: Math.max(0, p.stock - 1) }) });
-                              }} style={{ padding: "4px 10px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
-                              <button onClick={() => {
-                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod));
-                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 1 }) });
-                              }} style={{ padding: "4px 10px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
-                              <button onClick={() => {
-                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: 0} : prod));
-                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: 0 }) });
-                              }} style={{ padding: "4px 10px", background: "#dc2626", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Out of Stock</button>
-                              <button onClick={() => {
-                                setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 50} : prod));
-                                fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 50 }) });
-                              }} style={{ padding: "4px 10px", background: "#16a34a", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>Restock (+50)</button>
-                            </div>
-                          </div>
-                        ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {adminTab === "Promo Engine" && (
-                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Promo Engine</h3>
-                        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-                          <select value={newPromo.type} onChange={e => setNewPromo({...newPromo, type: e.target.value, target: e.target.value === "Weekend Sale" ? "All Store" : ""})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: "1 1 120px" }}>
-                            <option>BOGO</option>
-                            <option>Discount %</option>
-                            <option>Flat Price Drop</option>
-                            <option>Weekend Sale</option>
-                            <option>Category-wide Sale</option>
-                            <option>Product-specific Sale</option>
-                          </select>
-                          
-                          {newPromo.type === "Category-wide Sale" ? (
-                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
-                              <option value="" disabled>Select Category</option>
-                              {Array.from(new Set(adminProducts.map(p => p.category))).map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                              ))}
-                            </select>
-                          ) : newPromo.type === "Weekend Sale" ? (
-                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
-                              <option value="All Store">All Store</option>
-                            </select>
-                          ) : (
-                            <select value={newPromo.target} onChange={e => setNewPromo({...newPromo, target: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", flex: 1 }}>
-                              <option value="" disabled>Select Product</option>
-                              {adminProducts.map(p => (
-                                <option key={p.id} value={p.name}>{p.name}</option>
-                              ))}
-                            </select>
-                          )}
-
-                          <input 
-                            type="date" 
-                            value={newPromo.start} 
-                            min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
-                            onChange={e => setNewPromo({...newPromo, start: e.target.value})} 
-                            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
-                            onDoubleClick={e => e.currentTarget.blur()}
-                            style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", colorScheme: "dark" }} 
-                          />
-                          <input 
-                            type="date" 
-                            value={newPromo.end} 
-                            min={newPromo.start || new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0]}
-                            onChange={e => setNewPromo({...newPromo, end: e.target.value})} 
-                            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
-                            onDoubleClick={e => e.currentTarget.blur()}
-                            style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", colorScheme: "dark" }} 
-                          />
-                          
-                          <button onClick={() => {
-                            if (!newPromo.target) {
-                              setMessage("Please select a target for your promo!");
-                              return;
-                            }
-                            if (!newPromo.start || !newPromo.end) {
-                              setMessage("Please select valid promo start and end dates.");
-                              return;
-                            }
-                            
-                            const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split("T")[0];
-                            if (newPromo.start < localToday) {
-                              setMessage("Promo start date cannot be in the past!");
-                              return;
-                            }
-                            if (newPromo.end < newPromo.start) {
-                              setMessage("Promo end date cannot be earlier than its start date!");
-                              return;
-                            }
-                            
-                            fetch("/api/promos", {
-                                method: "POST",
-                                body: JSON.stringify({...newPromo, active: true})
-                            }).then(r => r.json()).then(data => setPromos([...promos, data]));
-                            
-                            setMessage(`Promo on ${newPromo.target} successfully activated!`);
-                            setNewPromo({ type: "BOGO", target: "", start: "", end: "" });
-                          }} style={{ padding: "10px 16px", background: "#2563eb", color: "white", border: 0, borderRadius: 8, cursor: "pointer" }}>Add Promo</button>
-                        </div>
-                        
-                        <div style={{ display: "grid", gap: 10 }}>
-                        {promos.map(pr => (
-                          <div key={pr.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", padding: 12, borderRadius: 8, flexWrap: "wrap", gap: 10 }}>
-                            <div>
-                              <strong style={{ color: "#86efac" }}>{pr.type}</strong> on {pr.target} <br/>
-                              <span style={{ fontSize: 12, color: "#94a3b8" }}>{pr.start} to {pr.end}</span>
-                            </div>
-                            <div style={{ display: "flex", gap: 8 }}>
-                              <button onClick={() => {
-                                setPromos(promos.map(x => x.id === pr.id ? {...x, active: !x.active} : x));
-                                fetch("/api/promos", { method: "PUT", body: JSON.stringify({ id: pr.id, active: !pr.active }) });
-                              }} style={{ padding: "6px 12px", background: pr.active ? "#16a34a" : "#475569", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>{pr.active ? "Active" : "Disabled"}</button>
-                              <button onClick={() => {
-                                setPromos(promos.filter(x => x.id !== pr.id));
-                                fetch(`/api/promos?id=${pr.id}`, { method: "DELETE" });
-                              }} style={{ padding: "6px 12px", background: "#dc2626", border: 0, color: "white", borderRadius: 4, cursor: "pointer" }}>Delete</button>
-                            </div>
-                          </div>
-                        ))}
-                        </div>
-                      </div>
+                    </div>
                     )}
 
                     {adminTab === "Orders" && (
@@ -1073,6 +1017,12 @@ export default function GroceryUATReadyApp() {
                       <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                         <h3 style={{ marginBottom: 12 }}>Daily Alerts</h3>
                         <div style={{ display: "grid", gap: 10 }}>
+                        {adminProducts.filter(p => p.stock < 10).map(p => (
+                          <div key={`low-stock-${p.id}`} style={{ padding: 12, borderRadius: 8, background: "#7f1d1d", color: "white", display: "flex", justifyContent: "space-between" }}>
+                            <span>⚠️ Critical: {p.name} drops below configured stock boundary. Only {p.stock} units remaining!</span>
+                            <button onClick={() => setAdminTab("Add/Edit/Inventory")} style={{ background: "transparent", border: "1px solid white", borderRadius: 4, padding: "4px 8px", color: "white", cursor: "pointer", fontWeight: "bold" }}>Review Inventory</button>
+                          </div>
+                        ))}
                         {adminAlerts.map(a => (
                           <div key={a.id} style={{ padding: 12, borderRadius: 8, background: a.type === "critical" ? "#7f1d1d" : "#9a3412", color: "white", display: "flex", justifyContent: "space-between" }}>
                             <span>{a.msg}</span>
@@ -1495,6 +1445,7 @@ export default function GroceryUATReadyApp() {
         )}
       </main>
 
+      {route !== "admin" && (
       <aside style={{ padding: 20, borderLeft: "1px solid #334155", overflowY: "auto" }}>
         <h3>Cart</h3>
 
@@ -1505,11 +1456,11 @@ export default function GroceryUATReadyApp() {
             {cart.map((x) => (
               <div key={x.id} style={{ marginBottom: 10 }}>
                 <div>
-                  {x.name} x{x.qty} — £{getLineTotal(x).toFixed(2)}
+                  {x.name} x{x.qty} — £{(itemsMap[x.id]?.total || 0).toFixed(2)}
                 </div>
 
                 <div style={{ color: "#86efac", fontSize: 12 }}>
-                  Saving: £{getLineSavings(x).toFixed(2)}
+                  Saving: £{(itemsMap[x.id]?.savings || 0).toFixed(2)}
                 </div>
 
                 <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
@@ -1576,6 +1527,7 @@ export default function GroceryUATReadyApp() {
           </>
         )}
       </aside>
+      )}
     </div>
   );
 }

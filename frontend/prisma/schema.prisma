@@ -57,5 +57,9 @@ model Promo {
   start     String
   end       String
   active    Boolean  @default(true)
+  buyX      Int?
+  payY      Int?
+  crossTarget String?
+  crossDiscount Int?
   createdAt DateTime @default(now())
 }
