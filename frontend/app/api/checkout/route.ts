@@ -11,11 +11,20 @@ export async function POST(req: Request) {
     });
 
     if (customer) {
+      const newOrderCount = customer.orders + 1;
+      let updatedNotes = customer.notes || "";
+      
+      // Autonomous Loyalty Trigger (5 Orders Threshold)
+      if (newOrderCount >= 5 && !updatedNotes.includes("LOYALTY")) {
+         updatedNotes = (updatedNotes + " LOYALTY").trim();
+      }
+
       customer = await prisma.customer.update({
         where: { id: customer.id },
         data: {
-          orders: customer.orders + 1,
+          orders: newOrderCount,
           address: deliveryAddress,
+          notes: updatedNotes,
         }
       });
     } else {
@@ -31,8 +40,8 @@ export async function POST(req: Request) {
       });
     }
 
-    // Create Order
-    const orderItems = cart.map((c: any) => `${c.name} x${c.qty}`).join(", ");
+    // Create Order natively utilizing strict JSON serialization
+    const orderItems = JSON.stringify(cart);
     const order = await prisma.order.create({
       data: {
         customerId: customer.id,
@@ -45,6 +54,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, customer, order });
   } catch (error) {
-    return NextResponse.json({ error: "Checkout failed" }, { status: 500 });
+    console.error("CHECKOUT API ERROR:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Checkout failed" }, { status: 500 });
   }
 }

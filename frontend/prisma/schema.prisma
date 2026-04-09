@@ -24,6 +24,7 @@ model Product {
   featured    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  batches     InventoryBatch[]
 }
 
 model Customer {
@@ -62,4 +63,16 @@ model Promo {
   crossTarget String?
   crossDiscount Int?
   createdAt DateTime @default(now())
+}
+
+model InventoryBatch {
+  id          Int      @id @default(autoincrement())
+  productId   Int
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Int      @default(0)
+  remaining   Int      @default(0)
+  costPrice   Float    @default(0.0)
+  supplier    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

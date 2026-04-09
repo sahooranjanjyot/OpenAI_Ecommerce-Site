@@ -17,6 +17,7 @@ type Buyer = {
   name: string;
   mobile: string;
   verified: boolean;
+  notes?: string;
 };
 
 const productsSeed: Product[] = [
@@ -69,6 +70,35 @@ export default function GroceryUATReadyApp() {
   const [editForm, setEditForm] = useState<any>({});
   const [catalogSearch, setCatalogSearch] = useState("");
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [globalPromo, setGlobalPromo] = useState({ active: false, type: "percent", value: 10, threshold: 50 });
+  const [loyaltyDiscountSetting, setLoyaltyDiscountSetting] = useState(10);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("groceryGlobalPromo");
+    if (saved) setGlobalPromo(JSON.parse(saved));
+    const savedLoyalty = localStorage.getItem("groceryLoyaltyDiscount");
+    if (savedLoyalty) setLoyaltyDiscountSetting(parseFloat(savedLoyalty) || 10);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("groceryGlobalPromo", JSON.stringify(globalPromo));
+  }, [globalPromo]);
+
+  useEffect(() => {
+    localStorage.setItem("groceryLoyaltyDiscount", loyaltyDiscountSetting.toString());
+  }, [loyaltyDiscountSetting]);
+
+  useEffect(() => {
+    if (message) {
+      const t = setTimeout(() => setMessage(""), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [route, selectedCategory, query, sortBy]);
 
   const [adminTab, setAdminTab] = useState("Add/Edit/Inventory");
   const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
@@ -79,22 +109,29 @@ export default function GroceryUATReadyApp() {
   const [adminCustomers, setAdminCustomers] = useState<any[]>([]);
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
 
+  const [inventoryBatches, setInventoryBatches] = useState<any[]>([]);
+  const [newBatch, setNewBatch] = useState({ productId: "", quantity: "", costPrice: "", supplier: "" });
+  const [orderStartDate, setOrderStartDate] = useState("");
+  const [orderEndDate, setOrderEndDate] = useState("");
+
   useEffect(() => {
     Promise.all([
       fetch("/api/products").then(r => r.json()),
       fetch("/api/orders").then(r => r.json()),
       fetch("/api/customers").then(r => r.json()),
       fetch("/api/promos").then(r => r.json()),
-    ]).then(([productsData, ordersData, customersData, promosData]) => {
+      fetch("/api/inventory").then((r) => r.ok ? r.json() : []),
+    ]).then(([productsData, ordersData, customersData, promosData, inventoryData]) => {
       setAdminProducts(productsData || []);
       setAdminOrders(ordersData || []);
       setAdminCustomers(customersData || []);
       setPromos(promosData || []);
+      setInventoryBatches(inventoryData || []);
     }).catch(console.error);
   }, []);
 
   const visible = useMemo(() => {
-    let list = route === "sale" ? products.filter((p) => p.onSale) : products;
+    let list = route === "sale" ? products.filter((p) => p.promo && p.promo.trim() !== "") : products;
 
     if (selectedCategory !== "All") {
       list = list.filter((p) => p.category.toLowerCase() === selectedCategory.toLowerCase());
@@ -223,10 +260,31 @@ export default function GroceryUATReadyApp() {
       }
     });
 
-    return { subtotal: _subtotal, totalSavings: _savings, itemsMap };
+    let globalDiscount = 0;
+    if (globalPromo.active && _subtotal >= globalPromo.threshold) {
+      if (globalPromo.type === "fixed") {
+        globalDiscount = globalPromo.value;
+      } else {
+        globalDiscount = _subtotal * (globalPromo.value / 100);
+      }
+      _subtotal -= globalDiscount;
+      _savings += globalDiscount;
+    }
+
+    const activeCustomerRecord = adminCustomers.find(cu => cu.phone === buyer?.mobile);
+    const isLoyaltyCustomer = activeCustomerRecord?.notes?.includes("LOYALTY") || buyer?.notes?.includes("LOYALTY");
+
+    let loyaltyDiscountAmt = 0;
+    if (isLoyaltyCustomer && _subtotal > 0) {
+       loyaltyDiscountAmt = _subtotal * (loyaltyDiscountSetting / 100);
+       _subtotal -= loyaltyDiscountAmt;
+       _savings += loyaltyDiscountAmt;
+    }
+
+    return { subtotal: _subtotal, totalSavings: _savings, itemsMap, globalDiscount, loyaltyDiscountAmt };
   };
 
-  const { subtotal, totalSavings, itemsMap } = calculateCartTotals();
+  const { subtotal, totalSavings, itemsMap, globalDiscount, loyaltyDiscountAmt } = calculateCartTotals();
 
   const registerOrLoginBuyer = () => {
     if (!mobile) {
@@ -261,14 +319,28 @@ export default function GroceryUATReadyApp() {
     const newBuyer: Buyer = {
       name,
       mobile,
-      verified: true,
+      verified: true
     };
-
     setBuyer(newBuyer);
     setOtpSent(false);
     setOtp("");
-    setMessage(`Buyer ${name} verified successfully`);
     setRoute("store");
+    setMessage(`Logged in as new buyer ${name}`);
+  };
+
+  const toggleLoyalty = async (c: any) => {
+    const isLoyal = c.notes?.includes("LOYALTY");
+    const newNotes = isLoyal ? c.notes.replace("LOYALTY", "").trim() : (c.notes || "").trim() + " LOYALTY";
+    try {
+      const res = await fetch("/api/customers", {
+        method: "PUT",
+        body: JSON.stringify({ id: c.id, notes: newNotes.trim() }),
+      });
+      if (res.ok) {
+        setAdminCustomers(prev => prev.map(x => x.id === c.id ? { ...x, notes: newNotes.trim() } : x));
+        setMessage(`${c.name} ${isLoyal ? "removed from" : "added to"} Loyalty program.`);
+      }
+    } catch(e) {}
   };
 
   const Btn = ({ label, onClick, active }: { label: string; onClick: () => void; active?: boolean }) => (
@@ -324,7 +396,7 @@ export default function GroceryUATReadyApp() {
         />
 
         {productsExpanded && (
-          <div style={{ margin: "6px 0 14px 0", display: "grid", gap: 6 }}>
+          <div style={{ margin: "4px 0 16px 12px", paddingLeft: 10, borderLeft: "2px solid #334155", display: "grid", gap: 4 }}>
             {[
               "All",
               "Flour",
@@ -345,14 +417,16 @@ export default function GroceryUATReadyApp() {
                   setRoute("store");
                   setMessage("");
                   setSelectedCategory(cat);
+                  setQuery("");
                 }}
                 style={{
                   textAlign: "left",
                   background: route === "store" && selectedCategory === cat ? "#1d4ed8" : "transparent",
-                  color: route === "store" && selectedCategory === cat ? "white" : "#cbd5e1",
-                  border: "1px solid #334155",
-                  borderRadius: 8,
-                  padding: "8px 10px",
+                  color: route === "store" && selectedCategory === cat ? "white" : "#94a3b8",
+                  border: route === "store" && selectedCategory === cat ? "1px solid #2563eb" : "1px solid transparent",
+                  borderRadius: 6,
+                  padding: "6px 10px",
+                  fontSize: 13,
                   cursor: "pointer",
                 }}
               >
@@ -362,7 +436,7 @@ export default function GroceryUATReadyApp() {
           </div>
         )}
 
-        <Btn active={route === "sale"} label="Sale" onClick={() => { setRoute("sale"); setMessage(""); }} />
+        <Btn active={route === "sale"} label="Offers" onClick={() => { setSelectedCategory("All"); setRoute("sale"); setMessage(""); }} />
         <Btn
           active={route === "buyer"}
           label={buyer ? `Buyer: ${buyer.name}` : "Buyer Login"}
@@ -398,17 +472,21 @@ export default function GroceryUATReadyApp() {
                 placeholder="Search products"
                 style={{ flex: 1, padding: 12, borderRadius: 10 }}
               />
-              <button
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  background: "#2563eb",
-                  color: "white",
-                  border: 0,
-                }}
-              >
-                Search
-              </button>
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 10,
+                    background: "#475569",
+                    color: "white",
+                    border: 0,
+                    cursor: "pointer",
+                  }}
+                >
+                  Clear
+                </button>
+              )}
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
@@ -422,19 +500,16 @@ export default function GroceryUATReadyApp() {
               </select>
             </div>
 
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                paddingRight: 8,
-                paddingBottom: 24,
-                alignContent: "start",
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                gap: 12,
-              }}
-            >
-              {visible.map((p) => (
+            <div style={{ flex: 1, overflowY: "auto", paddingRight: 8, paddingBottom: 24, display: "flex", flexDirection: "column" }}>
+              <div
+                style={{
+                  alignContent: "start",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                  gap: 12,
+                }}
+              >
+                {visible.slice((currentPage - 1) * 40, currentPage * 40).map((p) => (
                 <div
                   key={p.id}
                   style={{
@@ -526,10 +601,32 @@ export default function GroceryUATReadyApp() {
                       <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
                         In cart: {cart.find((x) => x.id === p.id)?.qty}
                       </div>
-                    ) : null}
+                    ) : (
+                      <div style={{ fontSize: 11, color: "transparent", marginTop: 4, textAlign: "center", userSelect: "none" }}>
+                        &nbsp;
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
+              </div>
+              {visible.length > 40 && (
+                <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 24 }}>
+                  <button 
+                    disabled={currentPage === 1} 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    style={{ padding: "8px 16px", borderRadius: 8, background: currentPage === 1 ? "#334155" : "#2563eb", color: "white", border: 0, cursor: currentPage === 1 ? "not-allowed" : "pointer", fontWeight: "bold" }}
+                  >Previous</button>
+                  <span style={{ padding: "8px 16px", background: "#1e293b", color: "white", borderRadius: 8, border: "1px solid #475569" }}>
+                    Page {currentPage} of {Math.ceil(visible.length / 40)}
+                  </span>
+                  <button 
+                    disabled={currentPage === Math.ceil(visible.length / 40)} 
+                    onClick={() => setCurrentPage(p => Math.min(Math.ceil(visible.length / 40), p + 1))}
+                    style={{ padding: "8px 16px", borderRadius: 8, background: currentPage === Math.ceil(visible.length / 40) ? "#334155" : "#2563eb", color: "white", border: 0, cursor: currentPage === Math.ceil(visible.length / 40) ? "not-allowed" : "pointer", fontWeight: "bold" }}
+                  >Next</button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -617,7 +714,7 @@ export default function GroceryUATReadyApp() {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(4, minmax(0,1fr))",
+                        gridTemplateColumns: "repeat(5, minmax(0,1fr))",
                         gap: 12,
                         marginBottom: 20,
                       }}
@@ -627,7 +724,9 @@ export default function GroceryUATReadyApp() {
                         "Orders",
                         "Customers",
                         "Alerts",
+                        "Revenue & Ledger",
                         "Analytics",
+                        "Global Promos"
                       ].map((x) => (
                         <button
                           key={x}
@@ -635,9 +734,9 @@ export default function GroceryUATReadyApp() {
                           style={{
                             padding: 12,
                             borderRadius: 10,
-                            background: adminTab === x ? "#1d4ed8" : "#2563eb",
-                            color: "white",
-                            border: 0,
+                            background: adminTab === x ? "#10b981" : "#1e293b",
+                            color: adminTab === x ? "white" : "#94a3b8",
+                            border: adminTab === x ? "1px solid #059669" : "1px solid #334155",
                             cursor: "pointer",
                             fontWeight: 600,
                           }}
@@ -648,6 +747,101 @@ export default function GroceryUATReadyApp() {
                     </div>
 
                     {adminTab === "Add/Edit/Inventory" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <input placeholder="Product Name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                            <option value="" disabled>Select Category</option>
+                            {[
+                              "Fruits",
+                              "Vegetables",
+                              "Confectionery",
+                              "Sweets",
+                              "Snacks",
+                              "Rice",
+                              "Flour",
+                              "Oil",
+                              "Lentils",
+                              "Spices",
+                              "Frozen Item",
+                              "Beverages",
+                              "Other"
+                            ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                          </select>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <input type="number" min="0" placeholder="Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <input type="number" min="0" placeholder="Stock Quantity" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: Math.max(0, parseInt(e.target.value)||0).toString()})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              {[
+                                "numbers",
+                                "Gm", "Kg", "ml", "Ltr"
+                              ].map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                            <select value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              <option value="">No Active Promo</option>
+                              <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
+                              <option value="Discount 50%">50% Discount</option>
+                              <option value="Buy 3 Pay 2">Buy 3 Pay 2</option>
+                              <option value="Buy 4 Pay 3">Buy 4 Pay 3</option>
+                              <option value="Buy 5 Pay 4">Buy 5 Pay 4</option>
+                              <option value="Clearance">Clearance</option>
+                            </select>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "4px 0" }}>
+                            <label style={{ background: "#334155", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, border: "1px solid #475569", flexShrink: 0 }}>
+                              📁 Upload Product Photo
+                              <input type="file" hidden accept="image/*" onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) { const r = new FileReader(); r.onload=()=>setNewProduct({...newProduct, image: r.result as string}); r.readAsDataURL(f); }
+                              }} />
+                            </label>
+                            {newProduct.image && <span style={{ color: "#86efac", fontWeight: "bold" }}>✓ Photo Attached</span>}
+                          </div>
+                          <textarea placeholder="Product Description" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", minHeight: 60 }} />
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <button onClick={() => {
+                              const isDuplicate = adminProducts.some(prod => prod.name.toLowerCase().trim() === newProduct.name.toLowerCase().trim());
+                              if (isDuplicate) {
+                                window.alert(`A product named "${newProduct.name.trim()}" already exists in the inventory! Duplicate entries are blocked.`);
+                                return;
+                              }
+
+                              const baseP = parseFloat(newProduct.price)||0;
+                              if (!newProduct.name || !newProduct.category || baseP <= 0 || newProduct.stock === "") {
+                                setMessage("Wait! Name, Category, Price, and Stock are absolutely required to publish.");
+                                return;
+                              }
+                              
+                              const p = { 
+                                name: newProduct.name.trim(), 
+                                category: newProduct.category, 
+                                price: baseP,
+                                wasPrice: 0,
+                                onSale: newProduct.promo !== "",
+                                promo: newProduct.promo,
+                                stock: parseInt(newProduct.stock)||0, 
+                                unit: newProduct.unit === "numbers" ? "numbers" : `${newProduct.unitSize} ${newProduct.unit}`, 
+                                image: newProduct.image, 
+                                description: newProduct.description,
+                                enabled: true, hidden: false, featured: false 
+                              };
+                              
+                              fetch("/api/products", {
+                                method: "POST",
+                                body: JSON.stringify(p)
+                              }).then(r => r.json()).then(data => {
+                                setAdminProducts([...adminProducts, data]);
+                                window.alert(`Success! ${p.name} has been formally published to your database and is now live.`);
+                              });
+                              
+                              setMessage("Product Published to Database!");
+                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
+                            }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
+                          </div>
+                        </div>
+                      </div>
                     <div
                       style={{
                         padding: 16,
@@ -728,14 +922,14 @@ export default function GroceryUATReadyApp() {
                                     placeholder="Category"
                                     style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                   />
-                                  <div style={{ display: "flex", gap: 8 }}>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                                     <input
                                       type="number"
                                       min="0"
                                       value={editForm.price ?? p.price}
                                       onChange={(e) => setEditForm({ ...editForm, price: parseFloat(e.target.value) || 0 })}
                                       placeholder="Price"
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: "1 1 80px", minWidth: 80, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     />
                                     <input
                                       type="number"
@@ -743,12 +937,12 @@ export default function GroceryUATReadyApp() {
                                       value={editForm.stock ?? p.stock}
                                       onChange={(e) => setEditForm({ ...editForm, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })}
                                       placeholder="Stock"
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: "1 1 60px", minWidth: 60, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     />
                                     <select
                                       value={editForm.unit ?? p.unit ?? "numbers"}
                                       onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
-                                      style={{ padding: 6, borderRadius: 4, flex: 1, minWidth: 0, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                      style={{ padding: 6, borderRadius: 4, flex: "1 1 100px", minWidth: 100, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     >
                                       {[
                                         "numbers",
@@ -796,8 +990,8 @@ export default function GroceryUATReadyApp() {
                                         const finalCategory = editForm.category !== undefined ? editForm.category : p.category;
                                         const finalPrice = editForm.price !== undefined ? editForm.price : p.price;
                                         
-                                        if (!finalName || !finalCategory || parseFloat(finalPrice) <= 0 || (editForm.image === "")) {
-                                          setMessage("Error: Name, Category, valid Price, and Image are required!");
+                                        if (!finalName || !finalCategory || parseFloat(finalPrice) <= 0) {
+                                          setMessage("Error: Name, Category, and valid Price are required to save.");
                                           return;
                                         }
 
@@ -859,8 +1053,10 @@ export default function GroceryUATReadyApp() {
                                     >Edit</button>
                                     <button
                                       onClick={() => {
-                                        setAdminProducts(adminProducts.filter(prod => prod.id !== p.id));
-                                        fetch(`/api/products?id=${p.id}`, { method: "DELETE" });
+                                        if (window.confirm(`Are you sure you want to permanently delete "${p.name}"?`)) {
+                                          setAdminProducts(adminProducts.filter(prod => prod.id !== p.id));
+                                          fetch(`/api/products?id=${p.id}`, { method: "DELETE" });
+                                        }
                                       }}
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#dc2626", color: "white", border: 0, cursor: "pointer" }}
                                     >Delete</button>
@@ -871,122 +1067,73 @@ export default function GroceryUATReadyApp() {
                           ))}
                       </div>
                     </div>
-                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                          <input placeholder="Product Name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                          <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                            <option value="" disabled>Select Category</option>
-                            {[
-                              "Fruits",
-                              "Vegetables",
-                              "Confectionery",
-                              "Sweets",
-                              "Snacks",
-                              "Rice",
-                              "Flour",
-                              "Oil",
-                              "Lentils",
-                              "Spices",
-                              "Frozen Item",
-                              "Beverages",
-                              "Other"
-                            ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                          </select>
-                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                            <input type="number" min="0" placeholder="Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                            <input type="number" min="0" placeholder="Stock Quantity" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: Math.max(0, parseInt(e.target.value)||0).toString()})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                            <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                            <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                              {[
-                                "numbers",
-                                "Gm", "Kg", "ml", "Ltr"
-                              ].map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                            <select value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                              <option value="">No Active Promo</option>
-                              <option value="BOGO">BOGO (Buy 1 Get 1 Free)</option>
-                              <option value="Discount 50%">50% Discount</option>
-                              <option value="Buy 3 Pay 2">Buy 3 Pay 2</option>
-                              <option value="Buy 4 Pay 3">Buy 4 Pay 3</option>
-                              <option value="Buy 5 Pay 4">Buy 5 Pay 4</option>
-                              <option value="Clearance">Clearance</option>
-                            </select>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "4px 0" }}>
-                            <label style={{ background: "#334155", padding: "10px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, border: "1px solid #475569", flexShrink: 0 }}>
-                              📁 Upload Product Photo
-                              <input type="file" hidden accept="image/*" onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) { const r = new FileReader(); r.onload=()=>setNewProduct({...newProduct, image: r.result as string}); r.readAsDataURL(f); }
-                              }} />
-                            </label>
-                            {newProduct.image && <span style={{ color: "#86efac", fontWeight: "bold" }}>✓ Photo Attached</span>}
-                          </div>
-                          <textarea placeholder="Product Description" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", minHeight: 60 }} />
-                          <div style={{ display: "flex", gap: 10 }}>
-                            <button onClick={() => {
-                              const baseP = parseFloat(newProduct.price)||0;
-                              if (!newProduct.name || !newProduct.category || baseP <= 0 || newProduct.stock === "" || !newProduct.image || !newProduct.description) {
-                                setMessage("Wait! All fields except Promo are required to publish safely.");
-                                return;
-                              }
-                              
-                              const p = { 
-                                name: newProduct.name, 
-                                category: newProduct.category, 
-                                price: baseP,
-                                wasPrice: 0,
-                                onSale: newProduct.promo !== "",
-                                promo: newProduct.promo,
-                                stock: parseInt(newProduct.stock)||0, 
-                                unit: newProduct.unit === "numbers" ? "numbers" : `${newProduct.unitSize} ${newProduct.unit}`, 
-                                image: newProduct.image, 
-                                description: newProduct.description,
-                                enabled: true, hidden: false, featured: false 
-                              };
-                              
-                              fetch("/api/products", {
-                                method: "POST",
-                                body: JSON.stringify(p)
-                              }).then(r => r.json()).then(data => setAdminProducts([...adminProducts, data]));
-                              
-                              setMessage("Product Published to Database!");
-                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
-                            }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
+                  </div>
+                  )}
+
+                  {adminTab === "Orders" && (
+                    <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                          <h3 style={{ margin: 0 }}>Order Management</h3>
+                          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                            <div style={{ display: "flex", flexDirection: "column" }}>
+                              <label style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>From Date</label>
+                              <input type="date" value={orderStartDate} onChange={e => setOrderStartDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column" }}>
+                              <label style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>To Date</label>
+                              <input type="date" value={orderEndDate} onChange={e => setOrderEndDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                            </div>
+                            <button onClick={() => { setOrderStartDate(""); setOrderEndDate(""); }} style={{ padding: "8px 12px", borderRadius: 8, background: "#475569", color: "white", border: 0, cursor: "pointer", marginTop: 17 }}>Clear</button>
                           </div>
                         </div>
-                      </div>
-                    </div>
-                    )}
-
-                    {adminTab === "Orders" && (
-                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Order Management</h3>
                         <div style={{ display: "grid", gap: 12 }}>
-                        {adminOrders.map(o => (
-                          <div key={o.id} style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                              <strong>Order #{o.id} - {o.customer}</strong>
-                              <strong>£{o.total.toFixed(2)}</strong>
+                        {adminOrders.filter(o => {
+                          const orderDate = new Date(o.createdAt).getTime();
+                          const start = orderStartDate ? new Date(orderStartDate).getTime() : 0;
+                          const end = orderEndDate ? new Date(orderEndDate).setHours(23, 59, 59, 999) : Infinity;
+                          return orderDate >= start && orderDate <= end;
+                        }).map(o => {
+                          let parsedItems = [];
+                          try { parsedItems = JSON.parse(o.items || "[]"); } catch(e){}
+                          
+                          return (
+                            <div key={o.id} style={{ background: "#1e293b", padding: 16, borderRadius: 8, borderLeft: "4px solid #3b82f6" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                                <div>
+                                  <strong style={{ fontSize: 16 }}>Order #{o.id}</strong> <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 8 }}>{o.createdAt ? new Date(o.createdAt).toLocaleString() : "-"}</span>
+                                  <div style={{ color: "#e2e8f0", marginTop: 4 }}>Customer #{o.customerId}</div>
+                                </div>
+                                <div style={{ textAlign: "right" }}>
+                                  <strong style={{ fontSize: 18, color: "#10b981" }}>£{o.total.toFixed(2)}</strong>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 16, background: "#0f172a", padding: 10, borderRadius: 8 }}>
+                                <strong style={{color: "#94a3b8", display: "block", marginBottom: 6}}>Items Purchased:</strong>
+                                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                  {parsedItems.map((item: any, idx: number) => (
+                                    <li key={idx}>{item.qty}x {item.name} (£{(item.price * item.qty).toFixed(2)})</li>
+                                  ))}
+                                  {parsedItems.length === 0 && <li>No items parsed</li>}
+                                </ul>
+                              </div>
+                              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                <select value={o.status} onChange={(e) => setAdminOrders(adminOrders.map(x => x.id === o.id ? {...x, status: e.target.value} : x))} style={{ padding: 8, borderRadius: 6, background: "#0f172a", color: "#f8fafc", border: "1px solid #475569" }}>
+                                  <option value="new">New</option>
+                                  <option value="accepted">Accepted</option>
+                                  <option value="packed">Packed</option>
+                                  <option value="out_for_delivery">Out for Delivery</option>
+                                  <option value="delivered">Delivered</option>
+                                  <option value="canceled">Canceled</option>
+                                  <option value="failed_payment">Failed Payment</option>
+                                  <option value="refund_request">Refund Request</option>
+                                </select>
+                                <button onClick={() => setMessage("Calling customer...")} style={{ padding: "8px 12px", background: "#0ea5e9", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Call Customer</button>
+                                <button onClick={() => setMessage("Invoice resent to customer.")} style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Resend Invoice</button>
+                              </div>
                             </div>
-                            <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 12 }}>Items: {o.items}</div>
-                            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                              <select value={o.status} onChange={(e) => setAdminOrders(adminOrders.map(x => x.id === o.id ? {...x, status: e.target.value} : x))} style={{ padding: 8, borderRadius: 6, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                                <option value="new">New</option>
-                                <option value="accepted">Accepted</option>
-                                <option value="packed">Packed</option>
-                                <option value="out_for_delivery">Out for Delivery</option>
-                                <option value="delivered">Delivered</option>
-                                <option value="canceled">Canceled</option>
-                                <option value="failed_payment">Failed Payment</option>
-                                <option value="refund_request">Refund Request</option>
-                              </select>
-                              <button onClick={() => setMessage("Calling customer: " + o.phone)} style={{ padding: "8px 12px", background: "#0ea5e9", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Call Customer</button>
-                              <button onClick={() => setMessage("Invoice resent to customer.")} style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Resend Invoice</button>
-                            </div>
-                          </div>
-                        ))}
+                          )
+                        })}
+                        {adminOrders.length === 0 && <div style={{ color: "#94a3b8", padding: 20, textAlign: "center" }}>No orders found for this timeframe.</div>}
                         </div>
                       </div>
                     )}
@@ -1002,9 +1149,9 @@ export default function GroceryUATReadyApp() {
                               <span>Orders: {c.orders}</span>
                             </div>
                             <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 8 }}>Phone: {c.phone} | Address: {c.address}</div>
-                            <div style={{ fontSize: 14, color: "#86efac", marginBottom: 12 }}>Note: {c.notes}</div>
+                            <div style={{ fontSize: 14, color: "#86efac", marginBottom: 12 }}>Note: {c.notes?.replace("LOYALTY", "")} {c.notes?.includes("LOYALTY") && <strong style={{ color: "#fb923c" }}>[LOYALTY CUSTOMER]</strong>}</div>
                             <div style={{ display: "flex", gap: 10 }}>
-                              <button onClick={() => setMessage(c.name + " marked for Loyalty Discount.")} style={{ padding: "8px 12px", background: "#16a34a", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Apply Loyalty Discount</button>
+                              <button onClick={() => toggleLoyalty(c)} style={{ padding: "8px 12px", background: c.notes?.includes("LOYALTY") ? "#fb923c" : "#16a34a", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>{c.notes?.includes("LOYALTY") ? "Remove Loyalty" : "Apply Loyalty Discount"}</button>
                               <button onClick={() => setAdminCustomers(adminCustomers.map(x => x.id === c.id ? {...x, blocked: !x.blocked} : x))} style={{ padding: "8px 12px", background: c.blocked ? "#f87171" : "#dc2626", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>{c.blocked ? "Unblock" : "Block Customer"}</button>
                             </div>
                           </div>
@@ -1033,45 +1180,269 @@ export default function GroceryUATReadyApp() {
                       </div>
                     )}
 
-                    {adminTab === "Analytics" && (
-                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Shop Dash</h3>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
-                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Today Sales</div>
-                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£425.50</div>
-                          </div>
-                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
-                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Weekly Sales</div>
-                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£3,204.00</div>
-                          </div>
-                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
-                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Daily Orders Count</div>
-                            <div style={{ fontSize: 24, fontWeight: "bold" }}>48</div>
-                          </div>
-                          <div style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
-                            <div style={{ fontSize: 14, color: "#94a3b8" }}>Average Basket Value</div>
-                            <div style={{ fontSize: 24, fontWeight: "bold" }}>£16.20</div>
+                    {adminTab === "Revenue & Ledger" && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                          <h3 style={{ marginBottom: 12 }}>Add Top-up Ledger Entry</h3>
+                          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                            <select value={newBatch.productId} onChange={e => setNewBatch({...newBatch, productId: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }}>
+                              <option value="" disabled>Select Product</option>
+                              {adminProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                            <input placeholder="Qty (e.g. 50)" type="number" value={newBatch.quantity} onChange={e => setNewBatch({...newBatch, quantity: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 120 }} />
+                            <input placeholder="Cost Price / Unit (£)" type="number" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({...newBatch, costPrice: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 180 }} />
+                            <input placeholder="Supplier" value={newBatch.supplier} onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }} />
+                            <button onClick={() => {
+                              if (!newBatch.productId || !newBatch.quantity || !newBatch.costPrice) {
+                                setMessage("Error: Product, Qty, and Cost are required for the ledger.");
+                                return;
+                              }
+                              fetch("/api/inventory", {
+                                method: "POST",
+                                body: JSON.stringify(newBatch)
+                              }).then(r => r.json()).then(data => {
+                                if (data.error) {
+                                  setMessage("API Error: " + data.error);
+                                  return;
+                                }
+                                setInventoryBatches([data, ...inventoryBatches]);
+                                setAdminProducts(adminProducts.map(p => p.id === data.productId ? {...p, stock: p.stock + data.quantity} : p));
+                                setMessage("Inventory top-up successfully logged.");
+                                setNewBatch({ productId: "", quantity: "", costPrice: "", supplier: "" });
+                              });
+                            }} style={{ padding: "10px 16px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Record Top-up</button>
                           </div>
                         </div>
+
+                        <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                          <h3 style={{ marginBottom: 12 }}>Detailed Top-up Ledger</h3>
+                          <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid #475569" }}>
+                                <th style={{ padding: 8 }}>Date</th>
+                                <th style={{ padding: 8 }}>Product</th>
+                                <th style={{ padding: 8 }}>Qty Loaded</th>
+                                <th style={{ padding: 8 }}>Cost per unit</th>
+                                <th style={{ padding: 8 }}>Supplier</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {inventoryBatches.slice(0, 15).map(b => (
+                                <tr key={b.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                                  <td style={{ padding: 8 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString() : "-"}</td>
+                                  <td style={{ padding: 8 }}>{b.product?.name || "Unknown"}</td>
+                                  <td style={{ padding: 8 }}>+{b.quantity}</td>
+                                  <td style={{ padding: 8 }}>£{b.costPrice ? b.costPrice.toFixed(2) : "0.00"}</td>
+                                  <td style={{ padding: 8 }}>{b.supplier || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                          <h3 style={{ marginBottom: 12 }}>Consolidated Revenue & Profit</h3>
+                          <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 14 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid #475569" }}>
+                                <th style={{ padding: 8 }}>Product</th>
+                                <th style={{ padding: 8 }}>Units Sold</th>
+                                <th style={{ padding: 8 }}>Unit COGS</th>
+                                <th style={{ padding: 8 }}>Total COGS</th>
+                                <th style={{ padding: 8 }}>Unit Retail Price</th>
+                                <th style={{ padding: 8 }}>Gross Revenue</th>
+                                <th style={{ padding: 8 }}>Gross Margin</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {adminProducts.map(p => {
+                                const soldUnits = adminOrders.reduce((sum, o) => {
+                                  let items = [];
+                                  try { items = JSON.parse(o.items || "[]"); } catch(e){}
+                                  const match = items.find((i: any) => i.id === p.id);
+                                  return sum + (match ? match.qty : 0);
+                                }, 0);
+                                
+                                const relatedBatches = inventoryBatches.filter(b => b.productId === p.id);
+                                const avgCost = relatedBatches.length > 0 ? (relatedBatches.reduce((sum, b) => sum + b.costPrice, 0) / relatedBatches.length) : p.price * 0.7; // Dummy 30% margin fallback
+                                
+                                const totalRevenue = soldUnits * p.price;
+                                const totalCost = soldUnits * avgCost;
+                                const profit = totalRevenue - totalCost;
+                                const isLoss = profit < 0 && soldUnits > 0;
+
+                                return Array.from({length: 1}).filter(() => soldUnits > 0 || relatedBatches.length > 0).map(() => (
+                                  <tr key={p.id} style={{ borderBottom: "1px solid #1e293b", background: isLoss ? "#450a0a" : "transparent" }}>
+                                    <td style={{ padding: 8 }}><strong>{p.name}</strong></td>
+                                    <td style={{ padding: 8 }}>{soldUnits}</td>
+                                    <td style={{ padding: 8 }}>£{avgCost.toFixed(2)}</td>
+                                    <td style={{ padding: 8 }}>£{totalCost.toFixed(2)}</td>
+                                    <td style={{ padding: 8 }}>£{p.price.toFixed(2)}</td>
+                                    <td style={{ padding: 8 }}>£{totalRevenue.toFixed(2)}</td>
+                                    <td style={{ padding: 8, color: isLoss ? "#fca5a5" : "#86efac", fontWeight: "bold" }}>
+                                      {profit < 0 ? "-" : "+"}£{Math.abs(profit).toFixed(2)}
+                                      {isLoss && <span style={{ marginLeft: 8, fontSize: 10, background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4 }}>LOSS</span>}
+                                    </td>
+                                  </tr>
+                                ));
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {adminTab === "Analytics" && (() => {
+                      const today = new Date().toISOString().split("T")[0];
+                      const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+                      let todaySales = 0;
+                      let weeklySales = 0;
+                      let todayOrdersCount = 0;
+                      let totalSales = 0;
+                      let orderCount = adminOrders.length;
+                      let allSoldItems: Record<string, number> = {};
+                      let categorySales: Record<string, number> = {};
+                      let promoSales = 0;
+                      
+                      const buyersMap: Record<string, number> = {};
+
+                      adminOrders.forEach(o => {
+                        totalSales += o.total;
+                        if (o.createdAt.startsWith(today)) {
+                          todaySales += o.total;
+                          todayOrdersCount++;
+                        }
+                        if (o.createdAt >= lastWeek) {
+                          weeklySales += o.total;
+                        }
                         
-                        <div style={{ marginTop: 20, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-                            <strong style={{ color: "#38bdf8" }}>Highest Revenue Category:</strong><br/>
-                            Fruits generated highest revenue this week
+                        if (o.buyerId) {
+                          buyersMap[o.buyerId] = (buyersMap[o.buyerId] || 0) + 1;
+                        }
+
+                        try {
+                          const items = JSON.parse(o.items || "[]");
+                          items.forEach((item: any) => {
+                            allSoldItems[item.id] = (allSoldItems[item.id] || 0) + item.qty;
+                            const product = adminProducts.find(p => p.id === item.id);
+                            if (product) {
+                              categorySales[product.category] = (categorySales[product.category] || 0) + item.qty;
+                              if (product.promo) {
+                                promoSales += (item.qty * item.price);
+                              }
+                            }
+                          });
+                        } catch(e) {}
+                      });
+
+                      const avgBasket = orderCount > 0 ? (totalSales / orderCount).toFixed(2) : "0.00";
+                      const repeatCustomers = Object.values(buyersMap).filter(qty => qty > 1).length;
+
+                      const sortedProducts = Object.entries(allSoldItems)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(entry => {
+                           const p = adminProducts.find(p => p.id === entry[0]);
+                           return p ? { name: p.name, qty: entry[1] } : null;
+                        }).filter(Boolean);
+
+                      const topSelling = sortedProducts.slice(0, 3);
+                      const slowMoving = adminProducts.map(p => ({
+                        name: p.name,
+                        qty: allSoldItems[p.id] || 0
+                      })).sort((a,b) => a.qty - b.qty).slice(0, 3);
+
+                      const bestCategory = Object.entries(categorySales).sort((a, b) => b[1] - a[1])[0];
+                      const lowStock = adminProducts.filter(p => p.stock < 10).map(p => p.name);
+
+                      return (
+                        <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                          <h3 style={{ marginBottom: 16 }}>Analytics Dashboard</h3>
+                          
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Today's Sales</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold", color: "#86efac" }}>£{todaySales.toFixed(2)}</div>
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Weekly Sales</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold", color: "#60a5fa" }}>£{weeklySales.toFixed(2)}</div>
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Daily Orders Count</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold" }}>{todayOrdersCount}</div>
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Avg Basket Value</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold" }}>£{avgBasket}</div>
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Repeat Customers</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold", color: "#fcd34d" }}>{repeatCustomers}</div>
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Promo Performance</div>
+                              <div style={{ fontSize: 24, fontWeight: "bold" }}>£{promoSales.toFixed(2)}</div>
+                            </div>
                           </div>
-                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-                            <strong style={{ color: "#f87171" }}>Stock Running Low:</strong><br/>
-                            4 Items require restocking
+
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Top Selling Products</h4>
+                              {topSelling.length ? topSelling.map((p: any, i) => <div key={i} style={{ marginBottom: 6 }}>{i+1}. {p.name} <span style={{ color: "#60a5fa" }}>({p.qty} sold)</span></div>) : <div style={{color: "#475569"}}>No data</div>}
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Slow Moving Products</h4>
+                              {slowMoving.map((p: any, i) => <div key={i} style={{ marginBottom: 6, color: "#fca5a5" }}>• {p.name} ({p.qty} sold)</div>)}
+                            </div>
+                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
+                              <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Stock Running Low</h4>
+                              {lowStock.length ? lowStock.map((name, i) => <span key={i} style={{ display: "inline-block", background: "#7f1d1d", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, marginRight: 6, marginBottom: 6, fontSize: 12 }}>{name}</span>) : <span style={{color: "#86efac"}}>Inventory Healthy</span>}
+                            </div>
+
                           </div>
-                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-                            <strong style={{ color: "#4ade80" }}>Top Selling Product:</strong><br/>
-                            Bananas
+                        </div>
+                      )
+                    })()}
+
+                    {adminTab === "Global Promos" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 16 }}>Cart Discount Settings</h3>
+                        <p style={{ color: "#94a3b8", marginBottom: 20 }}>Configure a global store-wide discount whenever a buyer spends a certain amount.</p>
+                        
+                        <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 400 }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                            <input type="checkbox" checked={globalPromo.active} onChange={e => setGlobalPromo({...globalPromo, active: e.target.checked})} style={{ width: 20, height: 20 }} />
+                            <span style={{ fontWeight: "bold" }}>Enable Store-Wide Cart Discount</span>
+                          </label>
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <label style={{ fontSize: 13, color: "#94a3b8" }}>Minimum Spend Threshold (£)</label>
+                            <input type="number" min="0" value={globalPromo.threshold} onChange={e => setGlobalPromo({...globalPromo, threshold: parseFloat(e.target.value)||0})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                           </div>
-                          <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-                            <strong style={{ color: "#fbbf24" }}>Slow Moving Product:</strong><br/>
-                            Frozen Peas
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <label style={{ fontSize: 13, color: "#94a3b8" }}>Discount Type</label>
+                            <select value={globalPromo.type} onChange={e => setGlobalPromo({...globalPromo, type: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              <option value="fixed">Fixed (£ Discount)</option>
+                              <option value="percent">Percentage (% Discount)</option>
+                            </select>
                           </div>
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <label style={{ fontSize: 13, color: "#94a3b8" }}>Discount Amount ({globalPromo.type === "fixed" ? "£" : "%"})</label>
+                            <input type="number" min="0" value={globalPromo.value} onChange={e => setGlobalPromo({...globalPromo, value: parseFloat(e.target.value)||0})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          </div>
+                          
+                          <div style={{ width: "100%", height: 1, background: "#334155", margin: "8px 0" }} />
+                          
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <label style={{ fontSize: 13, color: "#fb923c", fontWeight: "bold" }}>VIP Loyalty Discount Percentage (%)</label>
+                            <input type="number" min="0" max="100" value={loyaltyDiscountSetting} onChange={e => setLoyaltyDiscountSetting(parseFloat(e.target.value)||0)} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#fb923c", border: "1px solid #fb923c" }} />
+                            <span style={{ fontSize: 11, color: "#94a3b8" }}>Automated deduction applied continuously to any order from a tagged Loyal customer.</span>
+                          </div>
+
+                          <button onClick={() => window.alert("Promo settings successfully stored! Discount rules are now live across the platform.")} style={{ padding: 12, borderRadius: 8, background: "#2563eb", color: "white", border: 0, cursor: "pointer", fontWeight: "bold", marginTop: 8 }}>Save Promo Rules</button>
                         </div>
                       </div>
                     )}
@@ -1205,6 +1576,10 @@ export default function GroceryUATReadyApp() {
 
             <button
               onClick={() => {
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim())) {
+                  setMessage("Invalid email format detected");
+                  return;
+                }
                 setEmailVerificationSent(true);
                 setMessage("Mock email verification link sent");
               }}
@@ -1223,6 +1598,10 @@ export default function GroceryUATReadyApp() {
 
             <button
               onClick={() => {
+                if (!/^\+?[\d\s-]{7,15}$/.test(checkoutPhone.trim())) {
+                  setMessage("Invalid phone number format detected");
+                  return;
+                }
                 setPaymentOtpSent(true);
                 setMessage("Mock Twilio OTP sent: 654321");
               }}
@@ -1299,12 +1678,12 @@ export default function GroceryUATReadyApp() {
                   setMessage("Enter delivery address before payment");
                   return;
                 }
-                if (!checkoutPhone.trim()) {
-                  setMessage("Enter phone number for delivery updates");
+                if (!/^\+?[\d\s-]{7,15}$/.test(checkoutPhone.trim())) {
+                  setMessage("Invalid phone number format detected for delivery updates");
                   return;
                 }
-                if (!checkoutEmail.trim()) {
-                  setMessage("Enter email for invoice");
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim())) {
+                  setMessage("Invalid email format detected for invoice");
                   return;
                 }
                 if (!emailVerificationSent) {
@@ -1333,51 +1712,60 @@ export default function GroceryUATReadyApp() {
                   return;
                 }
 
-                if (buyer?.mobile) {
-                  setSavedInstructions((prev) => ({
-                    ...prev,
-                    [buyer.mobile]: Array.from(
-                      new Set([...(prev[buyer.mobile] || []), deliveryComment])
-                    ),
-                  }));
+                const activeBuyer = buyer || { mobile: checkoutPhone, name: "Guest Customer" };
 
-                  setOrderHistory((prev) => ({
-                    ...prev,
-                    [buyer.mobile]: [
-                      ...(prev[buyer.mobile] || []),
-                      {
-                        total: subtotal,
-                        items: cart.map((c) => `${c.name} x${c.qty}`).join(", "),
-                        address: deliveryAddress,
-                      },
-                    ],
-                  }));
+                setSavedInstructions((prev) => ({
+                  ...prev,
+                  [activeBuyer.mobile]: Array.from(
+                    new Set([...(prev[activeBuyer.mobile] || []), deliveryComment])
+                  ),
+                }));
 
-                  setSavedAddresses((prev) => ({
-                    ...prev,
-                    [buyer.mobile]: Array.from(
-                      new Set([...(prev[buyer.mobile] || []), deliveryAddress])
-                    ),
-                  }));
+                setOrderHistory((prev) => ({
+                  ...prev,
+                  [activeBuyer.mobile]: [
+                    ...(prev[activeBuyer.mobile] || []),
+                    {
+                      total: subtotal,
+                      items: cart.map((c) => `${c.name} x${c.qty}`).join(", "),
+                      address: deliveryAddress,
+                    },
+                  ],
+                }));
 
-                  fetch("/api/checkout", {
-                    method: "POST",
-                    body: JSON.stringify({ buyer, cart, deliveryAddress, deliveryComment, subtotal }),
+                setSavedAddresses((prev) => ({
+                  ...prev,
+                  [activeBuyer.mobile]: Array.from(
+                    new Set([...(prev[activeBuyer.mobile] || []), deliveryAddress])
+                  ),
+                }));
+
+                fetch("/api/checkout", {
+                  method: "POST",
+                  body: JSON.stringify({ buyer: activeBuyer, cart, deliveryAddress, deliveryComment, subtotal }),
                   }).then(res => res.json()).then(data => {
-                    setAdminOrders(prev => [...prev, data.order]);
-                    setAdminCustomers(prev => {
-                       const existing = prev.find(c => c.phone === data.customer.phone);
-                       if (existing) return prev.map(c => c.phone === data.customer.phone ? data.customer : c);
-                       return [...prev, data.customer];
-                    });
-                  }).catch(console.error);
-                }
-
-                setMessage(
-                  `Payment successful • card charged £${subtotal.toFixed(2)} • order placed`
-                );
-                setCart([]);
-                setRoute("store");
+                    if (data.error) {
+                      setMessage("Backend error: " + data.error);
+                      return;
+                    }
+                    if (data.order) {
+                      setAdminOrders(prev => [...prev, data.order]);
+                    }
+                    if (data.customer) {
+                      setAdminCustomers(prev => {
+                         const existing = prev.find(c => c.phone === data.customer.phone);
+                         if (existing) return prev.map(c => c.phone === data.customer.phone ? data.customer : c);
+                         return [...prev, data.customer];
+                      });
+                    }
+                    const orderNo = data.order?.id ? `ORD-${String(data.order.id).padStart(5, '0')}` : `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
+                    setMessage(`Order ${orderNo} successful • card charged £${subtotal.toFixed(2)}`);
+                    window.alert(`✅ Order Placed Successfully!\n\nOrder Number: ${orderNo}\nYour card was charged £${subtotal.toFixed(2)}.`);
+                    setCart([]);
+                    setRoute("store");
+                  }).catch(e => {
+                    setMessage("Network failure submitting order. Please check console.");
+                  });
               }}
               style={{
                 width: "100%",
@@ -1455,10 +1843,14 @@ export default function GroceryUATReadyApp() {
           <>
             {cart.map((x) => (
               <div key={x.id} style={{ marginBottom: 10 }}>
-                <div>
-                  {x.name} x{x.qty} — £{(itemsMap[x.id]?.total || 0).toFixed(2)}
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <div>
+                    {x.name} <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 4 }}>x{x.qty}</span>
+                  </div>
+                  <div style={{ fontWeight: 600 }}>
+                    £{(itemsMap[x.id]?.total || 0).toFixed(2)}
+                  </div>
                 </div>
-
                 <div style={{ color: "#86efac", fontSize: 12 }}>
                   Saving: £{(itemsMap[x.id]?.savings || 0).toFixed(2)}
                 </div>
@@ -1496,6 +1888,22 @@ export default function GroceryUATReadyApp() {
             ))}
 
             <hr style={{ margin: "16px 0" }} />
+            <hr style={{ margin: "16px 0" }} />
+            {globalPromo.active && globalDiscount === 0 && (
+              <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8, fontStyle: "italic" }}>
+                Add £{(globalPromo.threshold - subtotal).toFixed(2)} to unlock {globalPromo.type === "fixed" ? "£" + globalPromo.value : globalPromo.value + "%"} off!
+              </div>
+            )}
+            {globalDiscount > 0 && (
+              <div style={{ color: "#38bdf8", fontWeight: "bold", marginBottom: 8, fontSize: 14 }}>
+                🎉 Cart Promo Applied (-£{globalDiscount.toFixed(2)})
+              </div>
+            )}
+            {loyaltyDiscountAmt > 0 && (
+              <div style={{ color: "#fb923c", fontWeight: "bold", marginBottom: 8, fontSize: 14 }}>
+                🌟 Loyalty Discount Applied (-£{loyaltyDiscountAmt.toFixed(2)})
+              </div>
+            )}
             <div style={{ color: "#86efac", marginBottom: 8 }}>
               Your savings: £{totalSavings.toFixed(2)}
             </div>
