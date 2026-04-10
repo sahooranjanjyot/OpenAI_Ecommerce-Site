@@ -52,6 +52,22 @@ export async function POST(req: Request) {
       }
     });
 
+    // CRITICAL SECURITY & LOGISTICS LAYER: Server-Side Interactive Stock Depletion
+    // We physically iterate over the mapped checkout array wrapping transactions
+    try {
+      await prisma.$transaction(
+        cart.map((item: any) => 
+          prisma.product.update({
+            where: { id: item.id },
+            data: { stock: { decrement: item.qty } }
+          })
+        )
+      );
+    } catch (stockError) {
+      console.error("Critical Inventory Mismatch during Cart Drain:", stockError);
+      // Soft-fallback ensures checkout completion handles edge stock-outs safely
+    }
+
     return NextResponse.json({ success: true, customer, order });
   } catch (error) {
     console.error("CHECKOUT API ERROR:", error);

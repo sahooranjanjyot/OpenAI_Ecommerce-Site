@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
+const stripePromise = loadStripe("pk_test_TYooMQauvdEDq54NiTphI7jx");
 type Product = {
   id: number;
   name: string;
@@ -16,6 +19,7 @@ type Product = {
 type Buyer = {
   name: string;
   mobile: string;
+  email?: string;
   verified: boolean;
   notes?: string;
 };
@@ -33,6 +37,32 @@ const productsSeed: Product[] = [
   { id: 10, name: "Frozen Peas", category: "Frozen Item", price: 2.1, stock: 12 },
 ];
 
+const StripeNativeForm = ({ onConfirm, processing, setMessage }: { onConfirm: (token: string) => void, processing: boolean, setMessage: (msg: string) => void }) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  return (
+    <form onSubmit={async (e) => {
+      e.preventDefault();
+      if (!stripe || !elements) return;
+      const card = elements.getElement(CardElement);
+      if (!card) return;
+      const { paymentMethod, error } = await stripe.createPaymentMethod({ type: "card", card });
+      if (error) {
+        setMessage(error.message || "Payment verification failed.");
+      } else {
+        onConfirm(paymentMethod.id);
+      }
+    }}>
+      <div style={{ marginBottom: 16, background: "#1e293b", padding: 14, borderRadius: 8, border: "1px solid #475569" }}>
+        <CardElement options={{ hidePostalCode: true, style: { base: { fontSize: "16px", color: "#f8fafc", "::placeholder": { color: "#94a3b8" } }, invalid: { color: "#ef4444" } } }} />
+      </div>
+      <button disabled={!stripe || processing} type="submit" style={{ width: "100%", padding: "14px", borderRadius: 10, background: "#16a34a", color: "white", border: 0, fontWeight: "bold", cursor: processing ? "not-allowed" : "pointer" }}>
+        {processing ? "Contacting Stripe Gateway..." : "Confirm Secure Payment"}
+      </button>
+    </form>
+  );
+};
+
 export default function GroceryUATReadyApp() {
   const [route, setRoute] = useState<"store" | "sale" | "buyer" | "admin" | "checkout">("store");
   const [query, setQuery] = useState("");
@@ -43,18 +73,24 @@ export default function GroceryUATReadyApp() {
   const [buyer, setBuyer] = useState<Buyer | null>(null);
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "reset">("login");
   const [message, setMessage] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [checkoutPostcode, setCheckoutPostcode] = useState("");
+  const [postcodeDoors, setPostcodeDoors] = useState<string[]>([]);
+  const [postcodeLoading, setPostcodeLoading] = useState(false);
+  const [stripePaymentProcessing, setStripePaymentProcessing] = useState(false);
   const [deliveryComment, setDeliveryComment] = useState("");
   const [adminLogged, setAdminLogged] = useState(false);
   const [adminUser, setAdminUser] = useState("");
   const [adminPass, setAdminPass] = useState("");
   const [adminOtp, setAdminOtp] = useState("");
+  const [adminOtpSent, setAdminOtpSent] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<Record<string, string[]>>({});
   const [savedInstructions, setSavedInstructions] = useState<Record<string, string[]>>({});
-  const [orderHistory, setOrderHistory] = useState<Record<string, { total: number; items: string; address: string }[]>>({});
+  const [orderHistory, setOrderHistory] = useState<Record<string, { total: number; items: string; address: string, date?: string }[]>>({});
   const [checkoutPhone, setCheckoutPhone] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [cardName, setCardName] = useState("");
@@ -85,12 +121,21 @@ export default function GroceryUATReadyApp() {
     localStorage.setItem("groceryGlobalPromo", JSON.stringify(globalPromo));
   }, [globalPromo]);
 
+  const [supportContact, setSupportContact] = useState("Email: support@groceryos.com\nPhone: 0800 123 4567\nOperating Hours: 24/7");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("grocerySupportDetails");
+      if (saved) setSupportContact(saved);
+    } catch(e) {}
+  }, []);
+
   useEffect(() => {
     localStorage.setItem("groceryLoyaltyDiscount", loyaltyDiscountSetting.toString());
   }, [loyaltyDiscountSetting]);
 
   useEffect(() => {
-    if (message) {
+    if (message && !message.toLowerCase().includes("error") && !message.toLowerCase().includes("incomplete") && !message.toLowerCase().includes("failed")) {
       const t = setTimeout(() => setMessage(""), 5000);
       return () => clearTimeout(t);
     }
@@ -127,8 +172,51 @@ export default function GroceryUATReadyApp() {
       setAdminCustomers(customersData || []);
       setPromos(promosData || []);
       setInventoryBatches(inventoryData || []);
+      
+      const parsedAddrs: Record<string, string[]> = {};
+      const parsedOrders: Record<string, any[]> = {};
+      if (Array.isArray(ordersData)) {
+         ordersData.forEach(o => {
+            const boundPhone = o.customerPhone || o.customer?.phone;
+            const boundAddress = o.deliveryAddress || o.address;
+            
+            if (boundPhone) {
+               parsedOrders[boundPhone] = [...(parsedOrders[boundPhone] || []), { total: o.total, items: o.items, address: boundAddress, date: o.createdAt }];
+               if (boundAddress) {
+                  parsedAddrs[boundPhone] = Array.from(new Set([...(parsedAddrs[boundPhone] || []), boundAddress]));
+               }
+            }
+         });
+      }
+      setSavedAddresses(parsedAddrs);
+      setOrderHistory(parsedOrders);
     }).catch(console.error);
   }, []);
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window !== "undefined") {
+      try {
+        const storedBuyer = localStorage.getItem("groceryos_buyer");
+        if (storedBuyer) setBuyer(JSON.parse(storedBuyer));
+      } catch (e) {}
+      
+      if (window.location.hash.includes("admin")) {
+        setRoute("admin");
+      }
+    }
+  }, []);
+  
+  useEffect(() => {
+    if (buyer && route === "checkout") {
+      setCheckoutEmail(prev => prev || buyer.email || "");
+      setCheckoutPhone(prev => prev || buyer.mobile || "");
+      if (savedAddresses[buyer.mobile] && savedAddresses[buyer.mobile].length > 0) {
+        setDeliveryAddress(prev => prev || savedAddresses[buyer.mobile][0]);
+      }
+    }
+  }, [buyer, route, savedAddresses]);
 
   const visible = useMemo(() => {
     let list = route === "sale" ? products.filter((p) => p.promo && p.promo.trim() !== "") : products;
@@ -286,46 +374,58 @@ export default function GroceryUATReadyApp() {
 
   const { subtotal, totalSavings, itemsMap, globalDiscount, loyaltyDiscountAmt } = calculateCartTotals();
 
-  const registerOrLoginBuyer = () => {
-    if (!mobile) {
-      setMessage("Enter mobile");
+  const registerOrLoginBuyer = async () => {
+    if (!authEmail || !authPassword) {
+      setMessage("Enter email and password");
+      return;
+    }
+    if (authMode === "register" && (!name || !mobile)) {
+      setMessage("Enter your full name and authentic phone number for registration");
       return;
     }
 
-    if (!buyer) {
-      if (!name) {
-        setMessage("Enter name for first registration");
-        return;
-      }
-      setOtpSent(true);
-      setMessage("OTP sent: use 123456");
-      return;
-    }
+    try {
+       const res = await fetch("/api/auth", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({
+           action: authMode,
+           email: authEmail,
+           password: authPassword,
+           name: name,
+           phone: mobile
+         })
+       });
 
-    if (buyer.mobile === mobile) {
-      setMessage(`Welcome back ${buyer.name}`);
-      setRoute("store");
-    } else {
-      setMessage("Mobile number does not match registered buyer");
-    }
-  };
+       const data = await res.json();
 
-  const verifyOtp = () => {
-    if (otp !== "123456") {
-      setMessage("Invalid OTP");
-      return;
-    }
+       if (!res.ok) {
+         setMessage(data.error || "Authentication failed");
+         return;
+       }
 
-    const newBuyer: Buyer = {
-      name,
-      mobile,
-      verified: true
-    };
-    setBuyer(newBuyer);
-    setOtpSent(false);
-    setOtp("");
-    setRoute("store");
-    setMessage(`Logged in as new buyer ${name}`);
+       if (authMode === "reset") {
+         setMessage(data.message || "Password safely reset! Please login now.");
+         setAuthMode("login");
+         setAuthPassword("");
+         return;
+       }
+
+       const newBuyer: Buyer = {
+         name: data.customer.name,
+         mobile: data.customer.phone,
+         email: data.customer.email,
+         verified: true,
+         notes: data.customer.notes
+       };
+
+       setBuyer(newBuyer);
+       localStorage.setItem("groceryos_buyer", JSON.stringify(newBuyer));
+       setRoute("store");
+       setMessage(authMode === "register" ? "Registration successful!" : `Welcome back, ${data.customer.name}!`);
+    } catch(e) {
+      setMessage("Auth Server Error. Check console.");
+    }
   };
 
   const toggleLoyalty = async (c: any) => {
@@ -362,6 +462,8 @@ export default function GroceryUATReadyApp() {
     </button>
   );
 
+  if (!mounted) return <div style={{ display: 'flex', height: '100vh', background: '#0b132b', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', fontWeight: 'bold' }}>Loading Dashboard...</div>;
+
   return (
     <div
       style={{
@@ -379,9 +481,17 @@ export default function GroceryUATReadyApp() {
         ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover, 
+        input:-webkit-autofill:focus, 
+        input:-webkit-autofill:active{
+            -webkit-box-shadow: 0 0 0 30px #1e293b inset !important;
+            -webkit-text-fill-color: #f8fafc !important;
+            transition: background-color 5000s ease-in-out 0s;
+        }
       `}</style>
 
-      <aside style={{ padding: 20, borderRight: "1px solid #334155", overflowY: "auto" }}>
+      <aside style={{ padding: 20, borderRight: "1px solid #334155", overflowY: "auto", display: "flex", flexDirection: "column" }}>
         <h3>🛒 Grocery OS</h3>
 
         <Btn
@@ -437,16 +547,53 @@ export default function GroceryUATReadyApp() {
         )}
 
         <Btn active={route === "sale"} label="Offers" onClick={() => { setSelectedCategory("All"); setRoute("sale"); setMessage(""); }} />
+        
         <Btn
           active={route === "buyer"}
-          label={buyer ? `Buyer: ${buyer.name}` : "Buyer Login"}
+          label={buyer ? "My Account" : "Sign In"}
           onClick={() => { setRoute("buyer"); setMessage(""); }}
         />
-        <Btn
-          active={route === "admin"}
-          label={adminLogged ? "Admin Logged In" : "Admin Login"}
-          onClick={() => { setRoute("admin"); setMessage(""); }}
-        />
+        {(buyer || adminLogged) && (
+            <button
+              onClick={() => {
+                if (window.confirm("Are you sure you want to securely log out of your Grocery OS profile?")) {
+                   setBuyer(null);
+                   setAdminLogged(false);
+                   setRoute("store");
+                   localStorage.removeItem("groceryos_buyer");
+                   setMessage("You have securely signed out natively.");
+                }
+              }}
+              style={{
+                width: "100%", textAlign: "left", padding: 12, borderRadius: 10,
+                background: "transparent", color: "white", border: "1px solid #334155", cursor: "pointer",
+              }}
+            >
+              Log Out
+            </button>
+        )}
+        
+        {adminLogged && (
+          <Btn
+            active={route === "admin"}
+            label="Seller Dashboard"
+            onClick={() => { setRoute("admin"); setMessage(""); }}
+          />
+        )}
+
+        <div style={{ flex: 1, minHeight: 40 }} />
+        
+        <button
+            onClick={() => {
+              window.alert(`Grocery OS Dedicated Support\n\n${supportContact}`); 
+            }}
+            style={{
+              width: "100%", textAlign: "left", padding: 12, borderRadius: 10,
+              background: "transparent", color: "#94a3b8", border: "1px solid #334155", cursor: "pointer"
+            }}
+          >
+            Help & Support
+          </button>
       </aside>
 
       <main style={{ padding: 24, paddingBottom: 0, height: "100vh", display: "flex", flexDirection: "column", boxSizing: "border-box", overflow: "hidden" }}>
@@ -455,7 +602,10 @@ export default function GroceryUATReadyApp() {
             style={{
               marginBottom: 16,
               padding: 12,
-              border: "1px solid #334155",
+              border: "1px solid",
+              borderColor: message.toLowerCase().includes("error") || message.toLowerCase().includes("incomplete") || message.toLowerCase().includes("failed") ? "#ef4444" : "#334155",
+              color: message.toLowerCase().includes("error") || message.toLowerCase().includes("incomplete") || message.toLowerCase().includes("failed") ? "#fca5a5" : "inherit",
+              background: message.toLowerCase().includes("error") || message.toLowerCase().includes("incomplete") || message.toLowerCase().includes("failed") ? "#450a0a" : "transparent",
               borderRadius: 10,
             }}
           >
@@ -522,7 +672,10 @@ export default function GroceryUATReadyApp() {
                   }}
                 >
                   {p.image ? (
-                    <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                    </>
                   ) : (
                     <div
                       style={{
@@ -640,49 +793,63 @@ export default function GroceryUATReadyApp() {
                 <input
                   value={adminUser}
                   onChange={(e) => setAdminUser(e.target.value)}
-                  placeholder="Admin User ID"
-                  style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: 420,
-                  }}
+                  placeholder="Admin User ID / Email"
+                  disabled={adminOtpSent}
+                  style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "white", border: "1px solid #475569" }}
                 />
                 <input
                   type="password"
                   value={adminPass}
                   onChange={(e) => setAdminPass(e.target.value)}
-                  placeholder="Password"
-                  style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: 420,
-                  }}
+                  placeholder="Master Password"
+                  disabled={adminOtpSent}
+                  style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "white", border: "1px solid #475569" }}
                 />
-                <input
-                  value={adminOtp}
-                  onChange={(e) => setAdminOtp(e.target.value)}
-                  placeholder="OTP (123456)"
-                  style={{
-                    display: "block",
-                    padding: 12,
-                    marginBottom: 12,
-                    width: 420,
-                  }}
-                />
+                
+                {adminOtpSent && (
+                  <input
+                    value={adminOtp}
+                    onChange={(e) => setAdminOtp(e.target.value)}
+                    placeholder="Enter 6-Digit Email OTP"
+                    style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "#86efac", border: "1px solid #22c55e", fontWeight: "bold" }}
+                  />
+                )}
 
                 <Btn
-                  label="Login Admin"
-                  onClick={() => {
-                    if (adminUser && adminPass && adminOtp === "123456") {
-                      setAdminLogged(true);
-                      setMessage("Admin authenticated successfully");
+                  label={adminOtpSent ? "Verify Mail OTP & Login" : "Request Secure Mail OTP"}
+                  onClick={async () => {
+                    setMessage("Connecting to secure gateway...");
+                    if (!adminOtpSent) {
+                      const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "request_otp", username: adminUser, password: adminPass }) });
+                      const d = await r.json();
+                      if (d.error) return setMessage(d.error);
+                      setAdminOtpSent(true);
+                      setMessage(d.message);
                     } else {
-                      setMessage("Invalid admin credentials or OTP");
+                      const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "verify_otp", otp: adminOtp }) });
+                      const d = await r.json();
+                      if (d.error) return setMessage(d.error);
+                      setAdminLogged(true);
+                      setAdminOtpSent(false);
+                      setAdminOtp("");
+                      setMessage("Admin authenticated successfully!");
                     }
                   }}
                 />
+
+                {!adminOtpSent && (
+                  <button
+                    onClick={async () => {
+                      setMessage("Transmitting recovery packet natively...");
+                      const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "forgot_password" }) });
+                      const d = await r.json();
+                      setMessage(d.message || d.error);
+                    }}
+                    style={{ background: "transparent", color: "#38bdf8", border: 0, marginTop: 12, cursor: "pointer", fontWeight: "bold", width: "100%", textAlign: "left" }}
+                  >
+                    Forgot System Password?
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -1011,7 +1178,10 @@ export default function GroceryUATReadyApp() {
                               ) : (
                                 <>
                                   {p.image ? (
-                                    <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                                    <>
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img src={p.image} alt={p.name} style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 6, marginBottom: 8, background: "#1e293b" }} />
+                                    </>
                                   ) : (
                                     <div style={{ height: 120, borderRadius: 6, background: "#1e293b", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8, color: "#94a3b8", fontSize: 11 }}>
                                       Product Image
@@ -1128,7 +1298,26 @@ export default function GroceryUATReadyApp() {
                                   <option value="refund_request">Refund Request</option>
                                 </select>
                                 <button onClick={() => setMessage("Calling customer...")} style={{ padding: "8px 12px", background: "#0ea5e9", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Call Customer</button>
-                                <button onClick={() => setMessage("Invoice resent to customer.")} style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Resend Invoice</button>
+                                <button 
+                                  onClick={async () => {
+                                    setMessage("Retrieving customer credentials...");
+                                    const cust = adminCustomers.find(c => c.phone === o.customerPhone);
+                                    if (!cust || !cust.email) return setMessage("Client Email Not Provided in Registry!");
+                                    setMessage("Transmitting Digital Invoice securely...");
+                                    const res = await fetch("/api/email", {
+                                       method: "POST", body: JSON.stringify({
+                                          action: "resend_invoice",
+                                          email: cust.email,
+                                          orderDetails: { id: o.id, total: o.total, date: new Date(o.createdAt).toLocaleString(), items: Object.keys(o.items || {}).map(k=>`${o.items[k]?.qty}x ${o.items[k]?.name}`).join('\n') }
+                                       })
+                                    });
+                                    const d = await res.json();
+                                    setMessage(d.message || d.error);
+                                  }} 
+                                  style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}
+                                >
+                                  Resend Invoice
+                                </button>
                               </div>
                             </div>
                           )
@@ -1190,16 +1379,20 @@ export default function GroceryUATReadyApp() {
                               {adminProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
                             <input placeholder="Qty (e.g. 50)" type="number" value={newBatch.quantity} onChange={e => setNewBatch({...newBatch, quantity: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 120 }} />
-                            <input placeholder="Cost Price / Unit (£)" type="number" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({...newBatch, costPrice: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 180 }} />
+                            <input placeholder="Total Invoice Cost (£)" type="number" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({...newBatch, costPrice: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 180 }} />
                             <input placeholder="Supplier" value={newBatch.supplier} onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }} />
                             <button onClick={() => {
                               if (!newBatch.productId || !newBatch.quantity || !newBatch.costPrice) {
-                                setMessage("Error: Product, Qty, and Cost are required for the ledger.");
+                                setMessage("Error: Product, Qty, and Total Cost are required for the ledger.");
                                 return;
                               }
+                              
+                              // Architecturally calculate strictly derived Unit Cost from the Total Invoice bounds
+                              const calculatedUnitCost = parseFloat(newBatch.costPrice) / parseInt(newBatch.quantity);
+                              
                               fetch("/api/inventory", {
                                 method: "POST",
-                                body: JSON.stringify(newBatch)
+                                body: JSON.stringify({...newBatch, costPrice: calculatedUnitCost})
                               }).then(r => r.json()).then(data => {
                                 if (data.error) {
                                   setMessage("API Error: " + data.error);
@@ -1207,7 +1400,7 @@ export default function GroceryUATReadyApp() {
                                 }
                                 setInventoryBatches([data, ...inventoryBatches]);
                                 setAdminProducts(adminProducts.map(p => p.id === data.productId ? {...p, stock: p.stock + data.quantity} : p));
-                                setMessage("Inventory top-up successfully logged.");
+                                setMessage("Inventory explicitly logged with derived unit costs.");
                                 setNewBatch({ productId: "", quantity: "", costPrice: "", supplier: "" });
                               });
                             }} style={{ padding: "10px 16px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Record Top-up</button>
@@ -1222,7 +1415,8 @@ export default function GroceryUATReadyApp() {
                                 <th style={{ padding: 8 }}>Date</th>
                                 <th style={{ padding: 8 }}>Product</th>
                                 <th style={{ padding: 8 }}>Qty Loaded</th>
-                                <th style={{ padding: 8 }}>Cost per unit</th>
+                                <th style={{ padding: 8 }}>Total Invoice Cost</th>
+                                <th style={{ padding: 8 }}>Unit Cost</th>
                                 <th style={{ padding: 8 }}>Supplier</th>
                               </tr>
                             </thead>
@@ -1232,6 +1426,7 @@ export default function GroceryUATReadyApp() {
                                   <td style={{ padding: 8 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString() : "-"}</td>
                                   <td style={{ padding: 8 }}>{b.product?.name || "Unknown"}</td>
                                   <td style={{ padding: 8 }}>+{b.quantity}</td>
+                                  <td style={{ padding: 8 }}>£{(b.costPrice * b.quantity).toFixed(2)}</td>
                                   <td style={{ padding: 8 }}>£{b.costPrice ? b.costPrice.toFixed(2) : "0.00"}</td>
                                   <td style={{ padding: 8 }}>{b.supplier || "-"}</td>
                                 </tr>
@@ -1241,48 +1436,92 @@ export default function GroceryUATReadyApp() {
                         </div>
 
                         <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                          <h3 style={{ marginBottom: 12 }}>Consolidated Revenue & Profit</h3>
+                          <h3 style={{ marginBottom: 12 }}>Financial Profit & Loss (P&L)</h3>
                           <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 14 }}>
                             <thead>
                               <tr style={{ borderBottom: "1px solid #475569" }}>
                                 <th style={{ padding: 8 }}>Product</th>
-                                <th style={{ padding: 8 }}>Units Sold</th>
-                                <th style={{ padding: 8 }}>Unit COGS</th>
-                                <th style={{ padding: 8 }}>Total COGS</th>
+                                <th style={{ padding: 8 }}>Net Units Sold</th>
                                 <th style={{ padding: 8 }}>Unit Retail Price</th>
-                                <th style={{ padding: 8 }}>Gross Revenue</th>
-                                <th style={{ padding: 8 }}>Gross Margin</th>
+                                <th style={{ padding: 8 }}>Gross Sales Revenue</th>
+                                <th style={{ padding: 8 }}>Total COGS (£)</th>
+                                <th style={{ padding: 8 }}>Gross Profit (£)</th>
+                                <th style={{ padding: 8 }}>Net Margin (%)</th>
                               </tr>
                             </thead>
                             <tbody>
                               {adminProducts.map(p => {
                                 const soldUnits = adminOrders.reduce((sum, o) => {
                                   let items = [];
-                                  try { items = JSON.parse(o.items || "[]"); } catch(e){}
+                                  try { items = typeof o.items === 'string' ? JSON.parse(o.items) : o.items; } catch(e){}
+                                  if (!Array.isArray(items)) items = Object.values(o.items || {});
                                   const match = items.find((i: any) => i.id === p.id);
                                   return sum + (match ? match.qty : 0);
                                 }, 0);
                                 
                                 const relatedBatches = inventoryBatches.filter(b => b.productId === p.id);
-                                const avgCost = relatedBatches.length > 0 ? (relatedBatches.reduce((sum, b) => sum + b.costPrice, 0) / relatedBatches.length) : p.price * 0.7; // Dummy 30% margin fallback
-                                
-                                const totalRevenue = soldUnits * p.price;
-                                const totalCost = soldUnits * avgCost;
-                                const profit = totalRevenue - totalCost;
-                                const isLoss = profit < 0 && soldUnits > 0;
+                                const ledgerBought = relatedBatches.reduce((sum, b) => sum + parseInt(b.quantity), 0);
+                                const avgCost = ledgerBought > 0 ? relatedBatches.reduce((sum, b) => sum + (parseFloat(b.costPrice) * parseInt(b.quantity)), 0) / ledgerBought : (p.price * 0.7); 
 
-                                return Array.from({length: 1}).filter(() => soldUnits > 0 || relatedBatches.length > 0).map(() => (
+                                const totalRevenue = soldUnits * parseFloat(p.price);
+                                const totalCost = soldUnits * avgCost;
+                                const profitAmount = totalRevenue - totalCost;
+                                const profitPct = totalRevenue > 0 ? (profitAmount / totalRevenue) * 100 : 0;
+                                const isLoss = profitAmount < 0 && soldUnits > 0;
+
+                                return Array.from({length: 1}).filter(() => soldUnits > 0).map(() => (
                                   <tr key={p.id} style={{ borderBottom: "1px solid #1e293b", background: isLoss ? "#450a0a" : "transparent" }}>
                                     <td style={{ padding: 8 }}><strong>{p.name}</strong></td>
-                                    <td style={{ padding: 8 }}>{soldUnits}</td>
-                                    <td style={{ padding: 8 }}>£{avgCost.toFixed(2)}</td>
-                                    <td style={{ padding: 8 }}>£{totalCost.toFixed(2)}</td>
-                                    <td style={{ padding: 8 }}>£{p.price.toFixed(2)}</td>
+                                    <td style={{ padding: 8, color: "#38bdf8", fontWeight: "bold" }}>{soldUnits}</td>
+                                    <td style={{ padding: 8 }}>£{parseFloat(p.price).toFixed(2)}</td>
                                     <td style={{ padding: 8 }}>£{totalRevenue.toFixed(2)}</td>
-                                    <td style={{ padding: 8, color: isLoss ? "#fca5a5" : "#86efac", fontWeight: "bold" }}>
-                                      {profit < 0 ? "-" : "+"}£{Math.abs(profit).toFixed(2)}
-                                      {isLoss && <span style={{ marginLeft: 8, fontSize: 10, background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 4 }}>LOSS</span>}
-                                    </td>
+                                    <td style={{ padding: 8 }}>£{totalCost.toFixed(2)}</td>
+                                    <td style={{ padding: 8, color: isLoss ? "#fca5a5" : "#86efac", fontWeight: "bold" }}>{profitAmount < 0 ? "-" : "+"}£{Math.abs(profitAmount).toFixed(2)} {isLoss && <span style={{ marginLeft: 6, fontSize: 9, background: "#ef4444", color: "white", padding: "2px 4px", borderRadius: 4 }}>LOSS</span>}</td>
+                                    <td style={{ padding: 8, color: isLoss ? "#fca5a5" : "#86efac", fontWeight: "bold" }}>{profitPct.toFixed(1)}%</td>
+                                  </tr>
+                                ));
+                              })}
+                            </tbody>
+                          </table>
+
+                          <h3 style={{ marginTop: 32, marginBottom: 12 }}>Stock & Inventory Liability</h3>
+                          <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13 }}>
+                            <thead>
+                              <tr style={{ borderBottom: "1px solid #475569" }}>
+                                <th style={{ padding: 8 }}>Product</th>
+                                <th style={{ padding: 8 }}>Total Lifecycle Procured</th>
+                                <th style={{ padding: 8 }}>Total Deficit (Sold)</th>
+                                <th style={{ padding: 8 }}>Physical Active Stock</th>
+                                <th style={{ padding: 8 }}>Weighted Avg COGS</th>
+                                <th style={{ padding: 8 }}>Total Capital Liability</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {adminProducts.map(p => {
+                                const soldUnits = adminOrders.reduce((sum, o) => {
+                                  let items = [];
+                                  try { items = typeof o.items === 'string' ? JSON.parse(o.items) : o.items; } catch(e){}
+                                  if (!Array.isArray(items)) items = Object.values(o.items || {});
+                                  const match = items.find((i: any) => i.id === p.id);
+                                  return sum + (match ? match.qty : 0);
+                                }, 0);
+                                
+                                const relatedBatches = inventoryBatches.filter(b => b.productId === p.id);
+                                const ledgerBought = relatedBatches.reduce((sum, b) => sum + parseInt(b.quantity), 0);
+                                const avgCost = ledgerBought > 0 ? relatedBatches.reduce((sum, b) => sum + (parseFloat(b.costPrice) * parseInt(b.quantity)), 0) / ledgerBought : (p.price * 0.7); 
+                                
+                                const currentStock = p.stock;
+                                const trueTotalBought = currentStock + soldUnits;
+                                const totalCapitalLiability = currentStock * avgCost;
+
+                                return Array.from({length: 1}).filter(() => trueTotalBought > 0).map(() => (
+                                  <tr key={p.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                                    <td style={{ padding: 8 }}><strong>{p.name}</strong></td>
+                                    <td style={{ padding: 8 }}>{trueTotalBought} units</td>
+                                    <td style={{ padding: 8, color: "#fca5a5" }}>-{soldUnits} units</td>
+                                    <td style={{ padding: 8, color: "#86efac", fontWeight: "bold" }}>{currentStock} units</td>
+                                    <td style={{ padding: 8 }}>£{avgCost.toFixed(2)} / unit</td>
+                                    <td style={{ padding: 8 }}>£{totalCapitalLiability.toFixed(2)} suspended</td>
                                   </tr>
                                 ));
                               })}
@@ -1361,7 +1600,7 @@ export default function GroceryUATReadyApp() {
                           
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
                             <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Today's Sales</div>
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Today&apos;s Sales</div>
                               <div style={{ fontSize: 24, fontWeight: "bold", color: "#86efac" }}>£{todaySales.toFixed(2)}</div>
                             </div>
                             <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
@@ -1442,7 +1681,16 @@ export default function GroceryUATReadyApp() {
                             <span style={{ fontSize: 11, color: "#94a3b8" }}>Automated deduction applied continuously to any order from a tagged Loyal customer.</span>
                           </div>
 
-                          <button onClick={() => window.alert("Promo settings successfully stored! Discount rules are now live across the platform.")} style={{ padding: 12, borderRadius: 8, background: "#2563eb", color: "white", border: 0, cursor: "pointer", fontWeight: "bold", marginTop: 8 }}>Save Promo Rules</button>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 16 }}>
+                            <label style={{ fontSize: 13, color: "#fb923c", fontWeight: "bold" }}>Customer Support Details Overlay</label>
+                            <textarea value={supportContact} onChange={e => setSupportContact(e.target.value)} rows={4} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #fb923c", resize: "none" }} />
+                            <span style={{ fontSize: 11, color: "#94a3b8" }}>Structurally drives the popup string across the main buyer interface globally.</span>
+                          </div>
+
+                          <button onClick={() => {
+                             localStorage.setItem("grocerySupportDetails", supportContact);
+                             window.alert("Global Platform Settings dynamically verified and locked into production array!");
+                          }} style={{ padding: 12, borderRadius: 8, background: "#2563eb", color: "white", border: 0, cursor: "pointer", fontWeight: "bold", marginTop: 16 }}>Broadcast Platform Settings</button>
                         </div>
                       </div>
                     )}
@@ -1457,47 +1705,8 @@ export default function GroceryUATReadyApp() {
           <div style={{ maxWidth: 640, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
             <h2>Checkout</h2>
 
-            <p style={{ color: "#93c5fd", marginBottom: 8 }}>
-              {buyer?.mobile && orderHistory[buyer.mobile]?.length
-                ? `Previous orders: ${orderHistory[buyer.mobile].length}`
-                : "First order"}
-            </p>
-
-            {buyer?.mobile && orderHistory[buyer.mobile]?.length ? (
-              <button
-                onClick={() => {
-                  const last =
-                    orderHistory[buyer.mobile][orderHistory[buyer.mobile].length - 1];
-
-                  const rebuilt = last.items
-                    .split(", ")
-                    .map((entry) => {
-                      const [namePart, qtyPart] = entry.split(" x");
-                      const product = products.find((p) => p.name === namePart);
-                      return product ? { ...product, qty: Number(qtyPart) } : null;
-                    })
-                    .filter(Boolean) as (Product & { qty: number })[];
-
-                  setCart(rebuilt);
-                  setDeliveryAddress(last.address);
-                  setMessage("Last basket restored successfully");
-                }}
-                style={{
-                  marginBottom: 12,
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  background: "#0ea5e9",
-                  color: "white",
-                  border: 0,
-                  cursor: "pointer",
-                }}
-              >
-                Reorder Last Basket
-              </button>
-            ) : null}
-
             <p style={{ color: "#94a3b8", marginBottom: 16 }}>
-              Enter delivery details before payment.
+              {buyer?.mobile && (savedAddresses[buyer.mobile]?.length ?? 0) > 0 ? "Review and confirm your delivery details below before securely completing checkout." : "Please enter your delivery details to complete your profile."}
             </p>
 
             {buyer?.mobile && (savedAddresses[buyer.mobile]?.length ?? 0) > 0 && (
@@ -1518,6 +1727,7 @@ export default function GroceryUATReadyApp() {
             )}
 
             <input
+              autoComplete="none" spellCheck="false" autoCorrect="off" name="mock-checkout-phone-input"
               value={checkoutPhone}
               onChange={(e) => setCheckoutPhone(e.target.value)}
               placeholder="Phone number for delivery updates"
@@ -1526,7 +1736,6 @@ export default function GroceryUATReadyApp() {
                 background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
-
             {buyer?.mobile && (savedInstructions[buyer.mobile]?.length ?? 0) > 0 && (
               <select
                 onChange={(e) => setDeliveryComment(e.target.value)}
@@ -1547,7 +1756,7 @@ export default function GroceryUATReadyApp() {
             <textarea
               value={deliveryAddress}
               onChange={(e) => setDeliveryAddress(e.target.value)}
-              placeholder="Delivery address"
+              placeholder="Delivery address (Include Postcode)"
               style={{
                 width: "100%", minHeight: 100, padding: 10, borderRadius: 8, marginBottom: 10,
                 background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
@@ -1565,160 +1774,45 @@ export default function GroceryUATReadyApp() {
             />
 
             <input
+              autoComplete="none" spellCheck="false" autoCorrect="off" name="mock-checkout-email-input"
               value={checkoutEmail}
               onChange={(e) => setCheckoutEmail(e.target.value)}
               placeholder="Email for invoice / verification"
               style={{
-                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
+                width: "100%", padding: 10, borderRadius: 8, marginBottom: 16,
                 background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
               }}
             />
 
-            <button
-              onClick={() => {
-                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim())) {
-                  setMessage("Invalid email format detected");
-                  return;
-                }
-                setEmailVerificationSent(true);
-                setMessage("Mock email verification link sent");
-              }}
-              style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
-                background: "#475569",
-                color: "white",
-                border: 0,
-              }}
-            >
-              Send Email Verification Link
-            </button>
-
-            <button
-              onClick={() => {
-                if (!/^\+?[\d\s-]{7,15}$/.test(checkoutPhone.trim())) {
-                  setMessage("Invalid phone number format detected");
-                  return;
-                }
-                setPaymentOtpSent(true);
-                setMessage("Mock Twilio OTP sent: 654321");
-              }}
-              style={{
-                width: "100%",
-                padding: 10,
-                borderRadius: 8,
-                marginBottom: 10,
-                background: "#475569",
-                color: "white",
-                border: 0,
-              }}
-            >
-              Send Phone OTP
-            </button>
-
-            {paymentOtpSent && (
-              <input
-                value={paymentOtp}
-                onChange={(e) => setPaymentOtp(e.target.value)}
-                placeholder="Enter payment OTP 654321"
-                style={{
-                  width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
-                  background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-                }}
-              />
-            )}
-
-            <input
-              value={cardName}
-              onChange={(e) => setCardName(e.target.value)}
-              placeholder="Name on card"
-              style={{
-                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
-                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-              }}
-            />
-
-            <input
-              value={cardNumber}
-              onChange={(e) => setCardNumber(e.target.value)}
-              placeholder="Card number"
-              style={{
-                width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
-                background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-              }}
-            />
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 120px",
-                gap: 10,
-                marginBottom: 10,
-              }}
-            >
-              <input
-                value={cardExpiry}
-                onChange={(e) => setCardExpiry(e.target.value)}
-                placeholder="MM/YY"
-                style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
-              />
-              <input
-                value={cardCvv}
-                onChange={(e) => setCardCvv(e.target.value)}
-                placeholder="CVV"
-                style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
-              />
-            </div>
-
-            <button
-              onClick={() => {
+            <Elements stripe={stripePromise}>
+              <StripeNativeForm setMessage={setMessage} processing={stripePaymentProcessing} onConfirm={(tokenId) => {
                 if (!deliveryAddress.trim()) {
                   setMessage("Enter delivery address before payment");
+                  setStripePaymentProcessing(false);
                   return;
                 }
                 if (!/^\+?[\d\s-]{7,15}$/.test(checkoutPhone.trim())) {
                   setMessage("Invalid phone number format detected for delivery updates");
+                  setStripePaymentProcessing(false);
                   return;
                 }
                 if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(checkoutEmail.trim())) {
                   setMessage("Invalid email format detected for invoice");
-                  return;
-                }
-                if (!emailVerificationSent) {
-                  setMessage("Verify email first");
-                  return;
-                }
-                if (!paymentOtpSent || paymentOtp !== "654321") {
-                  setMessage("Phone OTP validation failed");
-                  return;
-                }
-                if (
-                  !cardName.trim() ||
-                  !cardNumber.trim() ||
-                  !cardExpiry.trim() ||
-                  !cardCvv.trim()
-                ) {
-                  setMessage("Enter complete card details");
-                  return;
-                }
-                if (cardNumber.replace(/ /g, "").length !== 16) {
-                  setMessage("Mock Stripe auth failed: invalid card number");
+                  setStripePaymentProcessing(false);
                   return;
                 }
                 if (cart.length === 0) {
                   setMessage("Cart is empty");
+                  setStripePaymentProcessing(false);
                   return;
                 }
 
+                setStripePaymentProcessing(true);
                 const activeBuyer = buyer || { mobile: checkoutPhone, name: "Guest Customer" };
 
                 setSavedInstructions((prev) => ({
                   ...prev,
-                  [activeBuyer.mobile]: Array.from(
-                    new Set([...(prev[activeBuyer.mobile] || []), deliveryComment])
-                  ),
+                  [activeBuyer.mobile]: Array.from(new Set([...(prev[activeBuyer.mobile] || []), deliveryComment])),
                 }));
 
                 setOrderHistory((prev) => ({
@@ -1735,22 +1829,24 @@ export default function GroceryUATReadyApp() {
 
                 setSavedAddresses((prev) => ({
                   ...prev,
-                  [activeBuyer.mobile]: Array.from(
-                    new Set([...(prev[activeBuyer.mobile] || []), deliveryAddress])
-                  ),
+                  [activeBuyer.mobile]: Array.from(new Set([...(prev[activeBuyer.mobile] || []), deliveryAddress])),
                 }));
 
                 fetch("/api/checkout", {
                   method: "POST",
                   body: JSON.stringify({ buyer: activeBuyer, cart, deliveryAddress, deliveryComment, subtotal }),
                   }).then(res => res.json()).then(data => {
+                    setStripePaymentProcessing(false);
                     if (data.error) {
                       setMessage("Backend error: " + data.error);
                       return;
                     }
-                    if (data.order) {
-                      setAdminOrders(prev => [...prev, data.order]);
-                    }
+                    if (data.order) setAdminOrders(prev => [...prev, data.order]);
+                    setAdminProducts(prev => prev.map(p => {
+                       const cartItem = cart.find(c => c.id === p.id);
+                       if (cartItem) return { ...p, stock: Math.max(0, p.stock - cartItem.qty) };
+                       return p;
+                    }));
                     if (data.customer) {
                       setAdminCustomers(prev => {
                          const existing = prev.find(c => c.phone === data.customer.phone);
@@ -1759,74 +1855,141 @@ export default function GroceryUATReadyApp() {
                       });
                     }
                     const orderNo = data.order?.id ? `ORD-${String(data.order.id).padStart(5, '0')}` : `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
-                    setMessage(`Order ${orderNo} successful • card charged £${subtotal.toFixed(2)}`);
-                    window.alert(`✅ Order Placed Successfully!\n\nOrder Number: ${orderNo}\nYour card was charged £${subtotal.toFixed(2)}.`);
+                    setMessage(`Order ${orderNo} successful • card verified via token [${tokenId.substring(0,8)}]`);
+                    window.alert(`✅ Order Placed Successfully!\n\nOrder Number: ${orderNo}\nYour card was successfully charged £${subtotal.toFixed(2)} via token [${tokenId.substring(0,8)}...].`);
                     setCart([]);
                     setRoute("store");
                   }).catch(e => {
+                    setStripePaymentProcessing(false);
                     setMessage("Network failure submitting order. Please check console.");
                   });
-              }}
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                borderRadius: 10,
-                background: "#16a34a",
-                color: "white",
-                border: 0,
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
-            >
-              Confirm Payment
-            </button>
+              }} />
+            </Elements>
           </div>
         )}
 
         {route === "buyer" && (
           <div style={{ maxWidth: 520, flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24 }}>
-            <h2>Buyer UAT Login</h2>
-            <p style={{ color: "#94a3b8", marginBottom: 16 }}>
-              First-time users register with OTP once. Future login requires only mobile.
-            </p>
-
-            {!otpSent ? (
+            {buyer ? (
               <>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Buyer name (first time only)"
-                  style={{
-                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
-                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-                  }}
-                />
-                <input
-                  value={mobile}
-                  onChange={(e) => setMobile(e.target.value)}
-                  placeholder="Mobile number"
-                  style={{
-                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
-                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-                  }}
-                />
-                <Btn
-                  label={buyer ? "Login Buyer" : "Register / Send OTP"}
-                  onClick={registerOrLoginBuyer}
-                />
+                <h2>Welcome Back, {buyer.name}!</h2>
+                <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #475569", marginBottom: 20, marginTop: 16 }}>
+                  <p style={{ color: "#94a3b8", marginBottom: 8, fontSize: 15 }}><strong style={{ color: "white" }}>Phone:</strong> {buyer.mobile}</p>
+                  <p style={{ color: "#94a3b8", marginBottom: 8, fontSize: 15 }}><strong style={{ color: "white" }}>Email:</strong> {buyer.email || "Not Provided"}</p>
+                  <p style={{ color: "#94a3b8", marginBottom: 8, fontSize: 15 }}><strong style={{ color: "white" }}>Status:</strong> <span style={{ color: buyer.verified ? "#86efac" : "#fca5a5"}}>{buyer.verified ? "Verified User" : "Unverified"}</span></p>
+
+                  <div style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #334155" }}>
+                     <strong style={{ color: "white", display: "block", marginBottom: 12 }}>Saved Delivery Addresses</strong>
+                     {savedAddresses[buyer.mobile] && savedAddresses[buyer.mobile].length > 0 ? (
+                        savedAddresses[buyer.mobile].slice(0, 1).map((addr, idx) => (
+                           <div key={idx} style={{ padding: 12, background: "#0f172a", borderRadius: 8, marginBottom: 8, color: "#cbd5e1", border: "1px solid #334155", display: "flex", alignItems: "center" }}>
+                             <span style={{ background: "#3b82f6", color: "white", padding: "4px 8px", borderRadius: 4, fontSize: 10, marginRight: 12, fontWeight: "bold", textTransform: "uppercase" }}>Default</span>
+                             <span>{addr}</span>
+                           </div>
+                        ))
+                     ) : (
+                        <span style={{ color: "#64748b", fontStyle: "italic" }}>No saved addresses yet. Order to save one.</span>
+                     )}
+                  </div>
+                </div>
+                <h3>Your Recent Orders</h3>
+                {orderHistory[buyer.mobile] && orderHistory[buyer.mobile].length > 0 ? (
+                  <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+                    {orderHistory[buyer.mobile].map((o, i) => (
+                      <div key={i} style={{ background: "#0f172a", padding: 18, borderRadius: 10, border: "1px solid #334155", position: "relative" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "flex-start" }}>
+                          <div>
+                             <strong style={{ color: "#38bdf8", fontSize: 16, display: "block" }}>Secure Order Delivered</strong>
+                             <span style={{ fontSize: 12, color: "#64748b" }}>{o.date ? new Date(o.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : "Recently Completed"}</span>
+                          </div>
+                          <span style={{ color: "#86efac", fontWeight: "bold", fontSize: 18 }}>£{o.total.toFixed(2)}</span>
+                        </div>
+                        <div style={{ color: "#cbd5e1", fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
+                          {(() => {
+                            try {
+                              const parsed = JSON.parse(o.items as string);
+                              if (Array.isArray(parsed)) return parsed.map((item: any) => `${item.name} x${item.qty}`).join(", ");
+                            } catch(e) {}
+                            return o.items;
+                          })()}
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>Delivered to: {o.address}</div>
+                        
+                        <div style={{ display: "flex", gap: 10 }}>
+                           <button 
+                             onClick={() => {
+                                const newCart: any[] = [];
+                                
+                                // Safely handle both Legacy String payloads and Raw JSON arrays
+                                let extractedProducts: {name: string, qty: number}[] = [];
+                                try {
+                                  const parsed = JSON.parse(o.items as string);
+                                  if (Array.isArray(parsed)) extractedProducts = parsed.map((item: any) => ({ name: item.name, qty: item.qty || 1 }));
+                                } catch(e) {
+                                  String(o.items).split(",").forEach(itemStr => {
+                                     const match = itemStr.trim().match(/(.+)\sx(\d+)/);
+                                     if (match) extractedProducts.push({ name: match[1].trim(), qty: parseInt(match[2]) });
+                                  });
+                                }
+
+                                extractedProducts.forEach(ep => {
+                                  const actualProduct = products.find(p => p.name.trim().toLowerCase() === ep.name.toLowerCase());
+                                  if (actualProduct) {
+                                     newCart.push({ ...actualProduct, qty: ep.qty });
+                                  }
+                                });
+                                
+                                if (newCart.length > 0) {
+                                   setCart(newCart);
+                                   setMessage("Historical shopping basket successfully reconstituted! You can now edit quantities.");
+                                } else {
+                                   setMessage("Error: Some of these products no longer exist in the active catalog.");
+                                }
+                             }} 
+                             style={{ padding: "8px 16px", background: "#2563eb", color: "white", border: 0, borderRadius: 6, fontWeight: "bold", cursor: "pointer", flex: 1 }}
+                           >
+                             Reorder This Delivery
+                           </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: 20, border: "1px dashed #334155", borderRadius: 10, marginTop: 16, color: "#64748b", textAlign: "center" }}>
+                    No orders found.
+                  </div>
+                )}
               </>
             ) : (
               <>
-                <input
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  placeholder="Enter OTP (123456)"
-                  style={{
-                    display: "block", padding: 12, marginBottom: 12, width: "100%", borderRadius: 10,
-                    background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
-                  }}
-                />
-                <Btn label="Verify OTP" onClick={verifyOtp} />
+                <h2>{authMode === "login" ? "Sign In to Grocery OS" : authMode === "register" ? "Create Free Account" : "Recover Password"}</h2>
+                {authMode === "login" && <p style={{ color: "#94a3b8", marginBottom: 16 }}>Enter Email and Password to securely login.</p>}
+                {authMode === "register" && <p style={{ color: "#94a3b8", marginBottom: 16 }}>Create an absolutely free account to track orders and save your basket.</p>}
+                {authMode === "reset" && <p style={{ color: "#94a3b8", marginBottom: 16 }}>Forget your password? Enter your Email and a NEW password below to force a reset immediately.</p>}
+
+                {(authMode === "register") && (
+                  <>
+                    <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13, fontWeight: "bold" }}>Full Name</label>
+                    <input autoComplete="none" spellCheck="false" autoCorrect="off" name="mock-name-string" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. John Doe" style={{ display: "block", padding: 12, marginBottom: 16, width: "100%", borderRadius: 10, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                    
+                    <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13, fontWeight: "bold" }}>Phone Number</label>
+                    <input autoComplete="none" spellCheck="false" autoCorrect="off" name="mock-phone-string" value={mobile} onChange={e => setMobile(e.target.value)} placeholder="07400000000" style={{ display: "block", padding: 12, marginBottom: 16, width: "100%", borderRadius: 10, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                  </>
+                )}
+
+                <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13, fontWeight: "bold" }}>Email Address</label>
+                <input autoComplete="new-password" spellCheck="false" autoCorrect="off" type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="user@domain.com" style={{ display: "block", padding: 12, marginBottom: 16, width: "100%", borderRadius: 10, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                
+                <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13, fontWeight: "bold" }}>{authMode === "reset" ? "New Password" : "Password"}</label>
+                <input autoComplete="new-password" spellCheck="false" autoCorrect="off" type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="••••••••" style={{ display: "block", padding: 12, marginBottom: 16, width: "100%", borderRadius: 10, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                
+                <Btn label={authMode === "login" ? "Login Securely" : authMode === "register" ? "Register New Account" : "Confirm Password Reset"} onClick={registerOrLoginBuyer} />
+                
+                <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                  {authMode !== "login" && <button onClick={() => {setAuthMode("login"); setMessage("")}} style={{ background: "transparent", color: "#38bdf8", border: 0, cursor: "pointer", fontWeight: "bold" }}>Back to Login</button>}
+                  {authMode !== "register" && <button onClick={() => {setAuthMode("register"); setMessage("")}} style={{ background: "transparent", color: "#38bdf8", border: 0, cursor: "pointer", fontWeight: "bold" }}>Create Free Account</button>}
+                  {authMode !== "reset" && <button onClick={() => {setAuthMode("reset"); setMessage("")}} style={{ background: "transparent", color: "#ef4444", border: 0, cursor: "pointer", fontWeight: "bold" }}>Forgot Password?</button>}
+                </div>
               </>
             )}
           </div>
@@ -1909,29 +2072,31 @@ export default function GroceryUATReadyApp() {
             </div>
             <strong>Total: £{subtotal.toFixed(2)}</strong>
 
-            <div style={{ marginTop: 16 }}>
-              <button
-                onClick={() => {
-                  if (cart.length === 0) {
-                    setMessage("Cart is empty");
-                    return;
-                  }
-                  setRoute("checkout");
-                }}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 10,
-                  background: "#16a34a",
-                  color: "white",
-                  border: 0,
-                  cursor: "pointer",
-                  fontWeight: 600,
-                }}
-              >
-                Proceed to Payment
-              </button>
-            </div>
+            {route !== "checkout" && (
+              <div style={{ marginTop: 16 }}>
+                <button
+                  onClick={() => {
+                    if (cart.length === 0) {
+                      setMessage("Cart is empty");
+                      return;
+                    }
+                    setRoute("checkout");
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    background: "#16a34a",
+                    color: "white",
+                    fontWeight: "bold",
+                    border: 0,
+                    cursor: "pointer",
+                  }}
+                >
+                  Proceed to Payment
+                </button>
+              </div>
+            )}
           </>
         )}
       </aside>
