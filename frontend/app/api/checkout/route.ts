@@ -56,12 +56,20 @@ export async function POST(req: Request) {
     // We physically iterate over the mapped checkout array wrapping transactions
     try {
       await prisma.$transaction(
-        cart.map((item: any) => 
+        cart.flatMap((item: any) => [
           prisma.product.update({
             where: { id: item.id },
             data: { stock: { decrement: item.qty } }
+          }),
+          prisma.inventoryBatch.create({
+            data: {
+               productId: item.id,
+               quantity: -Math.abs(item.qty),
+               channel: buyer.mobile === "POS" ? "instore" : "online",
+               supplier: "Sales Checkout"
+            }
           })
-        )
+        ])
       );
     } catch (stockError) {
       console.error("Critical Inventory Mismatch during Cart Drain:", stockError);

@@ -163,6 +163,9 @@ export default function GroceryUATReadyApp() {
 
   const [inventoryBatches, setInventoryBatches] = useState<any[]>([]);
   const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
+  const [posSearch, setPosSearch] = useState("");
+  const [posCart, setPosCart] = useState<any[]>([]);
+  const [posInputQty, setPosInputQty] = useState<{ [key: number]: string }>({});
   const [orderStartDate, setOrderStartDate] = useState("");
   const [orderEndDate, setOrderEndDate] = useState("");
   const [adminReturns, setAdminReturns] = useState<any[]>([]);
@@ -900,13 +903,14 @@ export default function GroceryUATReadyApp() {
 
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(5, minmax(0,1fr))",
+                        display: "flex",
+                        flexWrap: "wrap",
                         gap: 12,
                         marginBottom: 20,
                       }}
                     >
                       {[
+                        "Instore POS",
                         "Add & Edit",
                         "Orders",
                         "Customers",
@@ -939,6 +943,110 @@ export default function GroceryUATReadyApp() {
                       ))}
                     </div>
 
+                    {adminTab === "Instore POS" && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, height: "calc(100vh - 200px)" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                          <h3 style={{ margin: 0 }}>Point of Sale Terminal</h3>
+                          <div style={{ display: "flex", gap: 8 }}>
+                             <input 
+                               placeholder="Tap to scan Barcode physically or Search product..." 
+                               value={posSearch} 
+                               onChange={e => setPosSearch(e.target.value)} 
+                               style={{ flex: 1, padding: 12, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} 
+                             />
+                          </div>
+                          <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, paddingRight: 8 }}>
+                             {adminProducts.filter(p => p.name.toLowerCase().includes(posSearch.toLowerCase()) || p.category.toLowerCase().includes(posSearch.toLowerCase())).map(p => (
+                                <div key={p.id} style={{ background: "#1e293b", padding: 12, borderRadius: 10, border: "1px solid #334155", display: "flex", flexDirection: "column" }}>
+                                   <div style={{ fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>{p.name}</div>
+                                   <div style={{ color: "#38bdf8", fontSize: 12, marginBottom: 8 }}>£{p.price.toFixed(2)} / {p.unit}</div>
+                                   <div style={{ color: p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>Stock: {p.stock} {p.unit}</div>
+                                   
+                                   <div style={{ display: "flex", marginTop: "auto", gap: 4 }}>
+                                      {p.unit === "Piece" || p.unit === "Pack" ? (
+                                        <button onClick={() => {
+                                           setPosCart(prev => {
+                                              const existing = prev.find(x => x.id === p.id);
+                                              if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + 1} : x);
+                                              return [...prev, {...p, qty: 1}];
+                                           });
+                                        }} style={{ flex: 1, padding: "6px", background: "#2563eb", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>+ TAP</button>
+                                      ) : (
+                                        <div style={{ display: "flex", gap: 4, width: "100%" }}>
+                                          <input type="number" step="0.1" min="0.1" placeholder="wt" value={posInputQty[p.id] || ""} onChange={e => setPosInputQty({...posInputQty, [p.id]: e.target.value})} style={{ flex: 1, width: 0, padding: 4, borderRadius: 4, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
+                                          <button onClick={() => {
+                                             const val = parseFloat(posInputQty[p.id] || "0");
+                                             if (val > 0) {
+                                               setPosCart(prev => {
+                                                  const existing = prev.find(x => x.id === p.id);
+                                                  if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + val} : x);
+                                                  return [...prev, {...p, qty: val}];
+                                               });
+                                               setPosInputQty({...posInputQty, [p.id]: ""});
+                                             }
+                                          }} style={{ padding: "4px 8px", background: "#eab308", color: "black", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>Add</button>
+                                        </div>
+                                      )}
+                                   </div>
+                                </div>
+                             ))}
+                          </div>
+                        </div>
+
+                        <div style={{ background: "#0f172a", borderLeft: "1px solid #334155", padding: 16, display: "flex", flexDirection: "column", borderRadius: 12 }}>
+                          <h3 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Terminal Cart</h3>
+                          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, paddingRight: 8 }}>
+                             {posCart.length === 0 ? <span style={{ color: "#475569" }}>Cart is empty physically.</span> : posCart.map((c, i) => (
+                                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, borderBottom: "1px solid #1e293b", paddingBottom: 8 }}>
+                                  <div>
+                                     <div style={{ fontWeight: "bold" }}>{c.name}</div>
+                                     <div style={{ color: "#94a3b8" }}>{c.qty} {c.unit} x £{c.price.toFixed(2)}</div>
+                                  </div>
+                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                                     <strong>£{(c.qty * c.price).toFixed(2)}</strong>
+                                     <button onClick={() => {
+                                        setPosCart(prev => prev.filter(x => x.id !== c.id));
+                                     }} style={{ background: "transparent", color: "#fca5a5", border: 0, cursor: "pointer", fontSize: 11 }}>Remove</button>
+                                  </div>
+                                </div>
+                             ))}
+                          </div>
+                          
+                          <div style={{ marginTop: 16, borderTop: "1px dashed #334155", paddingTop: 16 }}>
+                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: "bold", marginBottom: 16 }}>
+                                <span>Total Payable:</span>
+                                <span style={{ color: "#86efac" }}>£{posCart.reduce((sum, c) => sum + (c.qty * c.price), 0).toFixed(2)}</span>
+                             </div>
+                             <button onClick={async () => {
+                                if (posCart.length === 0) return window.alert("Scan items to process transaction.");
+                                const total = posCart.reduce((sum, c) => sum + (c.qty * c.price), 0);
+                                
+                                const req = await fetch("/api/checkout", {
+                                   method: "POST",
+                                   headers: { "Content-Type" : "application/json" },
+                                   body: JSON.stringify({
+                                      buyer: { name: "Instore Walk-in", mobile: "POS" },
+                                      cart: posCart,
+                                      deliveryAddress: "Instore Counter Transaction",
+                                      deliveryComment: "POS Sale",
+                                      subtotal: total
+                                   })
+                                }).then(r => r.json());
+                                
+                                if (req.success) {
+                                   window.alert("Receipt generated securely. Stock depleted natively.");
+                                   setPosCart([]);
+                                   fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+                                   fetch("/api/orders").then(r => r.json()).then(data => setAdminOrders(data || []));
+                                } else {
+                                   window.alert("POS Failure: " + req.error);
+                                }
+                             }} style={{ width: "100%", padding: 14, background: "#16a34a", color: "white", fontSize: 16, fontWeight: "bold", borderRadius: 8, border: 0, cursor: "pointer" }}>Checkout Order</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {adminTab === "Add & Edit" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                       <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                         <h3 style={{ marginBottom: 12 }}>Add New Product (Master Data Only)</h3>
@@ -952,7 +1060,7 @@ export default function GroceryUATReadyApp() {
                             <input type="number" min="0" placeholder="Retail Selling Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                              {[ "Unit", "Gm", "Kg", "ml", "Ltr" ].map(u => <option key={u} value={u}>{u}</option>)}
+                              {[ "Pack", "KG", "Piece" ].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                             <select value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
                               <option value="">No Active Promo</option>
@@ -1121,8 +1229,9 @@ export default function GroceryUATReadyApp() {
                                       style={{ padding: 6, borderRadius: 4, flex: "1 1 100px", minWidth: 100, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     >
                                       {[
-                                        "Unit",
-                                        "Gm", "Kg", "ml", "Ltr"
+                                        "Pack",
+                                        "KG",
+                                        "Piece"
                                       ].map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
                                   </div>
