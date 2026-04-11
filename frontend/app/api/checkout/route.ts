@@ -67,7 +67,7 @@ export async function POST(req: Request) {
                quantity: -Math.abs(item.qty),
                channel: buyer.mobile === "POS" ? "instore" : "online",
                supplier: "Sales Checkout"
-            }
+            } as any
           })
         ])
       );

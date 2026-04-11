@@ -842,20 +842,26 @@ export default function GroceryUATReadyApp() {
                   label={adminOtpSent ? "Verify Mail OTP & Login" : "Request Secure Mail OTP"}
                   onClick={async () => {
                     setMessage("Connecting to secure gateway...");
-                    if (!adminOtpSent) {
-                      const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "request_otp", username: adminUser, password: adminPass }) });
-                      const d = await r.json();
-                      if (d.error) return setMessage(d.error);
-                      setAdminOtpSent(true);
-                      setMessage(d.message);
-                    } else {
-                      const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "verify_otp", otp: adminOtp }) });
-                      const d = await r.json();
-                      if (d.error) return setMessage(d.error);
-                      setAdminLogged(true);
-                      setAdminOtpSent(false);
-                      setAdminOtp("");
-                      setMessage("Admin authenticated successfully!");
+                    try {
+                      if (!adminOtpSent) {
+                        const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "request_otp", username: adminUser, password: adminPass }) });
+                        if (!r.ok) throw new Error("Gateway failed HTTP " + r.status);
+                        const d = await r.json();
+                        if (d.error) return setMessage(d.error);
+                        setAdminOtpSent(true);
+                        setMessage(d.message);
+                      } else {
+                        const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "verify_otp", otp: adminOtp }) });
+                        if (!r.ok) throw new Error("Gateway failed HTTP " + r.status);
+                        const d = await r.json();
+                        if (d.error) return setMessage(d.error);
+                        setAdminLogged(true);
+                        setAdminOtpSent(false);
+                        setAdminOtp("");
+                        setMessage("Admin authenticated successfully!");
+                      }
+                    } catch (err: any) {
+                       setMessage("Console Crash: Connection or Server Error -> " + err.message);
                     }
                   }}
                 />
