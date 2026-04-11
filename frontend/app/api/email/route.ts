@@ -21,15 +21,65 @@ export async function POST(req: Request) {
         from: `GroceryOS Automation <${activeSender}>`,
         to: email, 
         subject: `Your Grocery OS Invoice - Order #${orderDetails?.id || 'Manual'}`,
-        html: `<div style="font-family:sans-serif; padding: 20px;">
-           <h2>Grocery OS Order Invoice</h2>
-           <p>Thank you for shopping with us! Here are your secure digital transaction details natively:</p>
-           <div style="background: #f1f5f9; padding: 15px; border-radius: 8px;">
-             <p><strong>Order Reference:</strong> #${orderDetails?.id || 'N/A'}</p>
-             <p><strong>Total Billed:</strong> £${orderDetails?.total || 0}</p>
+        html: `<div style="font-family:sans-serif; padding: 20px; max-width: 600px; margin: auto; background: #fff; color: #333;">
+           <h2 style="color: #0f172a; margin-bottom: 24px;">Grocery OS Order Invoice</h2>
+           <p>Thank you for shopping with us! Here are your secure digital transaction details:</p>
+           
+           <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+             <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 20px;">
+               <tr>
+                 <td width="50%" valign="top">
+                   <h3 style="margin: 0 0 10px 0; color: #475569; font-size: 14px; text-transform: uppercase;">Order Details</h3>
+                   <p style="margin: 0 0 4px 0;"><strong>Reference:</strong> #${orderDetails?.id || 'N/A'}</p>
+                   <p style="margin: 0 0 4px 0;"><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+                 </td>
+                 <td width="50%" valign="top" align="right">
+                   <h3 style="margin: 0 0 10px 0; color: #475569; font-size: 14px; text-transform: uppercase;">Billed To</h3>
+                   <p style="margin: 0 0 4px 0;"><strong>Name:</strong> ${orderDetails?.customer?.name || req.headers.get("x-customer-name") || "Valued Customer"}</p>
+                   <p style="margin: 0 0 4px 0;"><strong>Phone:</strong> ${orderDetails?.customer?.phone || req.headers.get("x-customer-phone") || "N/A"}</p>
+                   <p style="margin: 0 0 4px 0;"><strong>Address:</strong> ${orderDetails?.address || "N/A"}</p>
+                 </td>
+               </tr>
+             </table>
+
              <hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 15px 0;"/>
-             <p><strong>Items:</strong></p>
-             <pre style="font-family: monospace; white-space: pre-wrap; margin:0;">${orderDetails?.items || 'See portal'}</pre>
+             <h3 style="margin: 0 0 15px 0; color: #475569; font-size: 14px; text-transform: uppercase;">Purchased Items</h3>
+             <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; text-align: left;">
+               <thead>
+                 <tr style="background: #e2e8f0; color: #334155; font-size: 13px;">
+                   <th style="border-bottom: 2px solid #cbd5e1;">Item Name</th>
+                   <th style="border-bottom: 2px solid #cbd5e1;">Qty</th>
+                   <th style="border-bottom: 2px solid #cbd5e1; text-align: right;">Price</th>
+                   <th style="border-bottom: 2px solid #cbd5e1; text-align: right;">Total</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 ${(() => {
+                   try {
+                     const items = typeof orderDetails?.items === 'string' ? JSON.parse(orderDetails.items) : (orderDetails?.items || []);
+                     return items.map((i: any) => `
+                       <tr style="border-bottom: 1px solid #e2e8f0;">
+                         <td style="padding: 8px 0;">${i.name} ${i.promo ? `<br/><span style="font-size:10px; color:#16a34a;">${i.promo}</span>` : ''}</td>
+                         <td style="padding: 8px 0;">${i.qty}</td>
+                         <td style="padding: 8px 0; text-align: right;">£${parseFloat(i.price).toFixed(2)}</td>
+                         <td style="padding: 8px 0; text-align: right;">£${(i.qty * parseFloat(i.price)).toFixed(2)}</td>
+                       </tr>
+                     `).join('');
+                   } catch(e) {
+                     return `<tr><td colspan="4" style="color: red;">Failed to parse item list.</td></tr>`;
+                   }
+                 })()}
+               </tbody>
+             </table>
+
+             <hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 15px 0;"/>
+             <table width="100%" cellpadding="0" cellspacing="0">
+               <tr>
+                 <td align="right">
+                    <h2 style="margin: 0; color: #0f172a;">Order Total: £${parseFloat(orderDetails?.total || 0).toFixed(2)}</h2>
+                 </td>
+               </tr>
+             </table>
            </div>
         </div>`
       });

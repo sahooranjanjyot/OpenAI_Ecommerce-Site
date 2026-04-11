@@ -108,11 +108,14 @@ export default function GroceryUATReadyApp() {
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [globalPromo, setGlobalPromo] = useState({ active: false, type: "percent", value: 10, threshold: 50 });
+  const [storeAlert, setStoreAlert] = useState({ active: false, message: "Welcome to Grocery OS! Fresh deals daily." });
   const [loyaltyDiscountSetting, setLoyaltyDiscountSetting] = useState(10);
 
   useEffect(() => {
     const saved = localStorage.getItem("groceryGlobalPromo");
     if (saved) setGlobalPromo(JSON.parse(saved));
+    const savedAlert = localStorage.getItem("groceryStoreAlert");
+    if (savedAlert) setStoreAlert(JSON.parse(savedAlert));
     const savedLoyalty = localStorage.getItem("groceryLoyaltyDiscount");
     if (savedLoyalty) setLoyaltyDiscountSetting(parseFloat(savedLoyalty) || 10);
   }, []);
@@ -120,6 +123,10 @@ export default function GroceryUATReadyApp() {
   useEffect(() => {
     localStorage.setItem("groceryGlobalPromo", JSON.stringify(globalPromo));
   }, [globalPromo]);
+
+  useEffect(() => {
+    localStorage.setItem("groceryStoreAlert", JSON.stringify(storeAlert));
+  }, [storeAlert]);
 
   const [supportContact, setSupportContact] = useState("Email: support@groceryos.com\nPhone: 0800 123 4567\nOperating Hours: 24/7");
 
@@ -155,7 +162,7 @@ export default function GroceryUATReadyApp() {
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
 
   const [inventoryBatches, setInventoryBatches] = useState<any[]>([]);
-  const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "Fruits", quantity: "", costPrice: "", supplier: "" });
+  const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
   const [orderStartDate, setOrderStartDate] = useState("");
   const [orderEndDate, setOrderEndDate] = useState("");
   const [adminReturns, setAdminReturns] = useState<any[]>([]);
@@ -469,12 +476,19 @@ export default function GroceryUATReadyApp() {
   if (!mounted) return <div style={{ display: 'flex', height: '100vh', background: '#0b132b', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', fontWeight: 'bold' }}>Loading Dashboard...</div>;
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        overflow: "hidden",
-        display: "grid",
-        gridTemplateColumns: route === "admin" ? "220px 1fr" : "220px 1fr 300px",
+    <>
+      {storeAlert.active && route !== "admin" && (
+        <div style={{ background: "#eab308", color: "black", textAlign: "center", padding: "6px 12px", fontWeight: "bold", zIndex: 9999, position: "fixed", top: 0, left: 0, right: 0, fontSize: 13, boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }}>
+           {storeAlert.message}
+        </div>
+      )}
+      <div
+        style={{
+          height: "100vh",
+          paddingTop: (storeAlert.active && route !== "admin") ? 30 : 0,
+          overflow: "hidden",
+          display: "grid",
+          gridTemplateColumns: route === "admin" ? "220px 1fr" : "220px 1fr 300px",
         background: "#0b132b",
         color: "white",
         boxSizing: "border-box",
@@ -1692,6 +1706,21 @@ export default function GroceryUATReadyApp() {
                             <span style={{ fontSize: 11, color: "#94a3b8" }}>Automated deduction applied continuously to any order from a tagged Loyal customer.</span>
                           </div>
 
+                          <div style={{ width: "100%", height: 1, background: "#334155", margin: "8px 0" }} />
+
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <h4 style={{ margin: 0, color: "#eab308" }}>Store Notification Banner</h4>
+                            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginTop: 4 }}>
+                              <input type="checkbox" checked={storeAlert.active} onChange={e => setStoreAlert({...storeAlert, active: e.target.checked})} style={{ width: 20, height: 20 }} />
+                              <span style={{ fontWeight: "bold" }}>Enable Dynamic Top Banner</span>
+                            </label>
+                            <label style={{ fontSize: 13, color: "#94a3b8", marginTop: 8 }}>Banner Announcement Text</label>
+                            <textarea value={storeAlert.message} onChange={e => setStoreAlert({...storeAlert, message: e.target.value})} rows={2} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #eab308", resize: "none" }} />
+                            <span style={{ fontSize: 11, color: "#94a3b8" }}>Structurally drives the persistent flashing banner overlay globally natively across buyer UI.</span>
+                          </div>
+
+                          <div style={{ width: "100%", height: 1, background: "#334155", margin: "8px 0" }} />
+
                           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 16 }}>
                             <label style={{ fontSize: 13, color: "#fb923c", fontWeight: "bold" }}>Customer Support Details Overlay</label>
                             <textarea value={supportContact} onChange={e => setSupportContact(e.target.value)} rows={4} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #fb923c", resize: "none" }} />
@@ -1868,7 +1897,11 @@ export default function GroceryUATReadyApp() {
                     if ((activeBuyer as any).email && data.order) {
                       fetch("/api/email", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { 
+                           "Content-Type": "application/json",
+                           "x-customer-name": (activeBuyer as any).name || "",
+                           "x-customer-phone": (activeBuyer as any).mobile || ""
+                        },
                         body: JSON.stringify({
                            email: (activeBuyer as any).email,
                            orderDetails: data.order
@@ -2217,5 +2250,6 @@ export default function GroceryUATReadyApp() {
       </aside>
       )}
     </div>
+    </>
   );
 }
