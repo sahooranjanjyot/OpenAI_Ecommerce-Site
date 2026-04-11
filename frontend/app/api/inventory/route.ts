@@ -18,9 +18,33 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    let pId = body.productId ? parseInt(body.productId) : null;
+    
+    // Architecturally orchestrate Just-In-Time Product Creation natively!
+    if (!pId && body.productName && body.category) {
+       const newP = await prisma.product.create({
+          data: {
+             name: body.productName,
+             category: body.category,
+             price: 0,
+             stock: 0,
+             unit: "Unit",
+             enabled: true,
+             hidden: false,
+             featured: false,
+             image: "",
+             promo: "",
+             description: ""
+          }
+       });
+       pId = newP.id;
+    }
+    
+    if (!pId) throw new Error("Product identity strictly unresolvable.");
+
     const batch = await prisma.inventoryBatch.create({
       data: {
-        productId: parseInt(body.productId),
+        productId: pId,
         quantity: parseInt(body.quantity),
         remaining: parseInt(body.quantity),
         costPrice: parseFloat(body.costPrice),
@@ -31,7 +55,7 @@ export async function POST(req: Request) {
 
     // Also strictly update the total product stock automatically
     await prisma.product.update({
-      where: { id: parseInt(body.productId) },
+      where: { id: pId },
       data: { stock: { increment: parseInt(body.quantity) } }
     });
 

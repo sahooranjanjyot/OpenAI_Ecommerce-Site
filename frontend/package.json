@@ -25,6 +25,7 @@
     "@types/react": "19.2.14",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "htmlparser2": "^12.0.0",
     "prisma": "^5.22.0",
     "tailwindcss": "^4"
   }

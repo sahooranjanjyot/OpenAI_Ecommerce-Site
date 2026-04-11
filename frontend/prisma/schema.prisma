@@ -51,6 +51,7 @@ model Order {
   items      String
   address    String?
   createdAt  DateTime @default(now())
+  returns    Return[]
 }
 
 model Promo {
@@ -77,4 +78,18 @@ model InventoryBatch {
   supplier    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model Return {
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  order        Order    @relation(fields: [orderId], references: [id])
+  productName  String
+  quantity     Int
+  reason       String
+  condition    String
+  refundAmount Float
+  restocked    Boolean
+  processedBy  String
+  createdAt    DateTime @default(now())
 }

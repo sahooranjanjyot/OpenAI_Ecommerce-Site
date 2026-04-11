@@ -145,8 +145,8 @@ export default function GroceryUATReadyApp() {
     setCurrentPage(1);
   }, [route, selectedCategory, query, sortBy]);
 
-  const [adminTab, setAdminTab] = useState("Add/Edit/Inventory");
-  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
+  const [adminTab, setAdminTab] = useState("Add & Edit");
+  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "" });
   const [inventorySearch, setInventorySearch] = useState("");
   const [promos, setPromos] = useState<any[]>([]);
   const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "", buyX: "", payY: "", crossTarget: "", crossDiscount: "" });
@@ -155,9 +155,11 @@ export default function GroceryUATReadyApp() {
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
 
   const [inventoryBatches, setInventoryBatches] = useState<any[]>([]);
-  const [newBatch, setNewBatch] = useState({ productId: "", quantity: "", costPrice: "", supplier: "" });
+  const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "Fruits", quantity: "", costPrice: "", supplier: "" });
   const [orderStartDate, setOrderStartDate] = useState("");
   const [orderEndDate, setOrderEndDate] = useState("");
+  const [adminReturns, setAdminReturns] = useState<any[]>([]);
+  const [returnForm, setReturnForm] = useState<{ active: boolean, targetOrder: any, targetItem: any, qty: number, reason: string, condition: string, refund: number, restock: boolean } | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -166,12 +168,14 @@ export default function GroceryUATReadyApp() {
       fetch("/api/customers").then(r => r.json()),
       fetch("/api/promos").then(r => r.json()),
       fetch("/api/inventory").then((r) => r.ok ? r.json() : []),
-    ]).then(([productsData, ordersData, customersData, promosData, inventoryData]) => {
+      fetch("/api/returns").then((r) => r.ok ? r.json() : [])
+    ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData]) => {
       setAdminProducts(productsData || []);
       setAdminOrders(ordersData || []);
       setAdminCustomers(customersData || []);
       setPromos(promosData || []);
       setInventoryBatches(inventoryData || []);
+      setAdminReturns(returnsData || []);
       
       const parsedAddrs: Record<string, string[]> = {};
       const parsedOrders: Record<string, any[]> = {};
@@ -477,6 +481,8 @@ export default function GroceryUATReadyApp() {
       }}
     >
       <style>{`
+        button { transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1); }
+        button:active { transform: scale(0.95); }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
@@ -887,7 +893,7 @@ export default function GroceryUATReadyApp() {
                       }}
                     >
                       {[
-                        "Add/Edit/Inventory",
+                        "Add & Edit",
                         "Orders",
                         "Customers",
                         "Alerts",
@@ -897,7 +903,13 @@ export default function GroceryUATReadyApp() {
                       ].map((x) => (
                         <button
                           key={x}
-                          onClick={() => setAdminTab(x)}
+                          onClick={() => {
+                             setAdminTab(x);
+                             if (x === "Orders" || x === "Analytics" || x === "Revenue & Ledger") {
+                               fetch("/api/orders").then(res => res.json()).then(setAdminOrders);
+                               fetch("/api/products").then(res => res.json()).then(setAdminProducts);
+                             }
+                          }}
                           style={{
                             padding: 12,
                             borderRadius: 10,
@@ -913,38 +925,20 @@ export default function GroceryUATReadyApp() {
                       ))}
                     </div>
 
-                    {adminTab === "Add/Edit/Inventory" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                    {adminTab === "Add & Edit" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                       <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                        <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
+                        <h3 style={{ marginBottom: 12 }}>Add New Product (Master Data Only)</h3>
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           <input placeholder="Product Name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                           <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
                             <option value="" disabled>Select Category</option>
-                            {[
-                              "Fruits",
-                              "Vegetables",
-                              "Confectionery",
-                              "Sweets",
-                              "Snacks",
-                              "Rice",
-                              "Flour",
-                              "Oil",
-                              "Lentils",
-                              "Spices",
-                              "Frozen Item",
-                              "Beverages",
-                              "Other"
-                            ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                            {[ "Fruits", "Vegetables", "Confectionery", "Sweets", "Snacks", "Rice", "Flour", "Oil", "Lentils", "Spices", "Frozen Item", "Beverages", "Other" ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
                           </select>
                           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                            <input type="number" min="0" placeholder="Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                            <input type="number" min="0" placeholder="Stock Quantity" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: Math.max(0, parseInt(e.target.value)||0).toString()})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                            <input type="number" min="0" placeholder="Retail Selling Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                              {[
-                                "numbers",
-                                "Gm", "Kg", "ml", "Ltr"
-                              ].map(u => <option key={u} value={u}>{u}</option>)}
+                              {[ "Unit", "Gm", "Kg", "ml", "Ltr" ].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                             <select value={newProduct.promo} onChange={e => setNewProduct({...newProduct, promo: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
                               <option value="">No Active Promo</option>
@@ -967,17 +961,24 @@ export default function GroceryUATReadyApp() {
                             {newProduct.image && <span style={{ color: "#86efac", fontWeight: "bold" }}>✓ Photo Attached</span>}
                           </div>
                           <textarea placeholder="Product Description" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569", minHeight: 60 }} />
+                          
                           <div style={{ display: "flex", gap: 10 }}>
                             <button onClick={() => {
                               const isDuplicate = adminProducts.some(prod => prod.name.toLowerCase().trim() === newProduct.name.toLowerCase().trim());
                               if (isDuplicate) {
-                                window.alert(`A product named "${newProduct.name.trim()}" already exists in the inventory! Duplicate entries are blocked.`);
+                                window.alert(`A product named "${newProduct.name.trim()}" already exists! Duplicate entries are blocked.`);
                                 return;
                               }
 
                               const baseP = parseFloat(newProduct.price)||0;
-                              if (!newProduct.name || !newProduct.category || baseP <= 0 || newProduct.stock === "") {
-                                setMessage("Wait! Name, Category, Price, and Stock are absolutely required to publish.");
+                              if (baseP === 0) {
+                                if (!window.confirm("Warning: You are saving this product with a SELLING PRICE OF £0.00 (Zero/Free). Are you absolutely sure?")) {
+                                  return;
+                                }
+                              }
+
+                              if (!newProduct.name || !newProduct.category) {
+                                setMessage("Wait! Name and Category are absolutely required to publish.");
                                 return;
                               }
                               
@@ -988,8 +989,8 @@ export default function GroceryUATReadyApp() {
                                 wasPrice: 0,
                                 onSale: newProduct.promo !== "",
                                 promo: newProduct.promo,
-                                stock: parseInt(newProduct.stock)||0, 
-                                unit: newProduct.unit === "numbers" ? "numbers" : `${newProduct.unitSize} ${newProduct.unit}`, 
+                                stock: 0, // Enforced 0 - Must use Ledger to add stock explicitly Native Rule
+                                unit: newProduct.unit === "Unit" ? "Unit" : `${newProduct.unitSize} ${newProduct.unit}`, 
                                 image: newProduct.image, 
                                 description: newProduct.description,
                                 enabled: true, hidden: false, featured: false 
@@ -1000,22 +1001,23 @@ export default function GroceryUATReadyApp() {
                                 body: JSON.stringify(p)
                               }).then(r => r.json()).then(data => {
                                 setAdminProducts([...adminProducts, data]);
-                                window.alert(`Success! ${p.name} has been formally published to your database and is now live.`);
+                                window.alert(`Success! Master Record for ${p.name} created. You must use the 'Revenue & Ledger' tab to physically fund its inventory.`);
                               });
                               
-                              setMessage("Product Published to Database!");
-                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "numbers", image: "", promo: "", description: "" });
-                            }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish</button>
+                              setMessage("Master Product Added!");
+                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "" });
+                            }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish Master Record</button>
                           </div>
                         </div>
                       </div>
-                    <div
-                      style={{
-                        padding: 16,
-                        border: "1px solid #334155",
-                        borderRadius: 12,
-                      }}
-                    >
+
+                      <div
+                        style={{
+                          padding: 16,
+                          border: "1px solid #334155",
+                          borderRadius: 12,
+                        }}
+                      >
                       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                         <input
                           value={catalogSearch}
@@ -1095,24 +1097,17 @@ export default function GroceryUATReadyApp() {
                                       min="0"
                                       value={editForm.price ?? p.price}
                                       onChange={(e) => setEditForm({ ...editForm, price: parseFloat(e.target.value) || 0 })}
-                                      placeholder="Price"
+                                      placeholder="Selling Price"
                                       style={{ padding: 6, borderRadius: 4, flex: "1 1 80px", minWidth: 80, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     />
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={editForm.stock ?? p.stock}
-                                      onChange={(e) => setEditForm({ ...editForm, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                                      placeholder="Stock"
-                                      style={{ padding: 6, borderRadius: 4, flex: "1 1 60px", minWidth: 60, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
-                                    />
+                                    {/* Stock Field Strip - Ledger Only */}
                                     <select
-                                      value={editForm.unit ?? p.unit ?? "numbers"}
+                                      value={editForm.unit ?? p.unit ?? "Unit"}
                                       onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
                                       style={{ padding: 6, borderRadius: 4, flex: "1 1 100px", minWidth: 100, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                     >
                                       {[
-                                        "numbers",
+                                        "Unit",
                                         "Gm", "Kg", "ml", "Ltr"
                                       ].map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
@@ -1155,10 +1150,16 @@ export default function GroceryUATReadyApp() {
                                       onClick={() => {
                                         const finalName = editForm.name !== undefined ? editForm.name : p.name;
                                         const finalCategory = editForm.category !== undefined ? editForm.category : p.category;
-                                        const finalPrice = editForm.price !== undefined ? editForm.price : p.price;
+                                        const finalPrice = parseFloat(editForm.price !== undefined ? editForm.price : p.price) || 0;
                                         
-                                        if (!finalName || !finalCategory || parseFloat(finalPrice) <= 0) {
-                                          setMessage("Error: Name, Category, and valid Price are required to save.");
+                                        if (finalPrice <= 0) {
+                                          if (!window.confirm("Warning: You are re-saving this product with a COST OF £0.00 (Zero/Free). Are you absolutely sure?")) {
+                                            return;
+                                          }
+                                        }
+
+                                        if (!finalName || !finalCategory) {
+                                          setMessage("Error: Name and Category are required to save.");
                                           return;
                                         }
 
@@ -1193,21 +1194,12 @@ export default function GroceryUATReadyApp() {
                                   </div>
                                   <div>{p.category}</div>
                                   <div>
-                                    £{p.price.toFixed(2)} {p.unit && p.unit !== "numbers" ? " · " + p.unit : ""}
+                                    £{p.price.toFixed(2)} {p.unit && p.unit !== "Unit" ? " · " + p.unit : ""}
                                     {p.stock < 10 && <span style={{ marginLeft: 6, fontSize: 10, background: "#7f1d1d", color: "#fca5a5", padding: "2px 6px", borderRadius: 10 }}>Low Stock</span>}
                                     {p.promo && <span style={{ marginLeft: 6, fontSize: 10, background: "#ef4444", color: "white", padding: "2px 6px", borderRadius: 10 }}>{p.promo}</span>}
                                   </div>
-                                  
-                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                                    <button onClick={() => {
-                                      setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: Math.max(0, prod.stock - 1)} : prod));
-                                      fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: Math.max(0, p.stock - 1) }) });
-                                    }} style={{ padding: "2px 8px", background: "#475569", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>-</button>
-                                    <span style={{ fontSize: 12, fontWeight: "bold" }}>{p.stock}</span>
-                                    <button onClick={() => {
-                                      setAdminProducts(adminProducts.map(prod => prod.id === p.id ? {...prod, stock: prod.stock + 1} : prod));
-                                      fetch("/api/products", { method: "PUT", body: JSON.stringify({ id: p.id, stock: p.stock + 1 }) });
-                                    }} style={{ padding: "2px 8px", background: "#2563eb", color: "white", border: 0, borderRadius: 4, cursor: "pointer" }}>+</button>
+                                  <div style={{ alignItems: "center", gap: 6, marginTop: 8, background: "#0f172a", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
+                                    <span style={{ fontSize: 12, fontWeight: "bold", color: "#e2e8f0" }}>Available Stock: {p.stock}</span>
                                   </div>
 
                                   <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
@@ -1217,7 +1209,7 @@ export default function GroceryUATReadyApp() {
                                     <button
                                       onClick={() => {
                                         setEditingProductId(p.id);
-                                        setEditForm({ name: p.name, category: p.category, price: p.price, stock: p.stock, unit: p.unit ?? "numbers", enabled: p.enabled ?? true, featured: p.featured ?? false, hidden: p.hidden ?? false, image: p.image ?? "" });
+                                        setEditForm({ name: p.name, category: p.category, price: p.price, stock: p.stock, unit: p.unit ?? "Unit", enabled: p.enabled ?? true, featured: p.featured ?? false, hidden: p.hidden ?? false, image: p.image ?? "" });
                                       }}
                                       style={{ padding: "6px 10px", borderRadius: 8, background: "#2563eb", color: "white", border: 0, flex: 1, cursor: "pointer" }}
                                     >Edit</button>
@@ -1247,11 +1239,11 @@ export default function GroceryUATReadyApp() {
                           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                             <div style={{ display: "flex", flexDirection: "column" }}>
                               <label style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>From Date</label>
-                              <input type="date" value={orderStartDate} onChange={e => setOrderStartDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                              <input type="date" value={orderStartDate} max={orderEndDate || undefined} onChange={e => setOrderStartDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
                             </div>
                             <div style={{ display: "flex", flexDirection: "column" }}>
                               <label style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>To Date</label>
-                              <input type="date" value={orderEndDate} onChange={e => setOrderEndDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                              <input type="date" value={orderEndDate} min={orderStartDate || undefined} onChange={e => setOrderEndDate(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
                             </div>
                             <button onClick={() => { setOrderStartDate(""); setOrderEndDate(""); }} style={{ padding: "8px 12px", borderRadius: 8, background: "#475569", color: "white", border: 0, cursor: "pointer", marginTop: 17 }}>Clear</button>
                           </div>
@@ -1262,7 +1254,7 @@ export default function GroceryUATReadyApp() {
                           const start = orderStartDate ? new Date(orderStartDate).getTime() : 0;
                           const end = orderEndDate ? new Date(orderEndDate).setHours(23, 59, 59, 999) : Infinity;
                           return orderDate >= start && orderDate <= end;
-                        }).map(o => {
+                        }).sort((a,b) => b.id - a.id).map(o => {
                           let parsedItems = [];
                           try { parsedItems = JSON.parse(o.items || "[]"); } catch(e){}
                           
@@ -1280,44 +1272,22 @@ export default function GroceryUATReadyApp() {
                               <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 16, background: "#0f172a", padding: 10, borderRadius: 8 }}>
                                 <strong style={{color: "#94a3b8", display: "block", marginBottom: 6}}>Items Purchased:</strong>
                                 <ul style={{ margin: 0, paddingLeft: 20 }}>
-                                  {parsedItems.map((item: any, idx: number) => (
-                                    <li key={idx}>{item.qty}x {item.name} (£{(item.price * item.qty).toFixed(2)})</li>
-                                  ))}
+                                  {parsedItems.map((item: any, idx: number) => {
+                                    const returnedAmt = adminReturns.filter((r: any) => r.orderId === o.id && r.productName === item.name).reduce((sum: number, r: any) => sum + r.quantity, 0);
+                                    return (
+                                     <li key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                       <span>
+                                          <span style={{textDecoration: returnedAmt >= item.qty ? "line-through" : "none"}}>{item.qty}x {item.name} (£{(item.price * item.qty).toFixed(2)})</span>
+                                          {returnedAmt > 0 && <span style={{ color: "#f87171", fontSize: 12, marginLeft: 8 }}>[Returned {returnedAmt}/{item.qty}]</span>}
+                                       </span>
+                                       {returnedAmt < item.qty && (
+                                          <button onClick={() => setReturnForm({ active: true, targetOrder: o, targetItem: item, qty: 1, reason: "Defective / Damaged", condition: "Damaged / Unsellable", refund: item.price, restock: false })} style={{ padding: "4px 8px", background: "#334155", color: "white", border: "1px solid #475569", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>Process Return</button>
+                                       )}
+                                    </li>
+                                    );
+                                  })}
                                   {parsedItems.length === 0 && <li>No items parsed</li>}
                                 </ul>
-                              </div>
-                              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                                <select value={o.status} onChange={(e) => setAdminOrders(adminOrders.map(x => x.id === o.id ? {...x, status: e.target.value} : x))} style={{ padding: 8, borderRadius: 6, background: "#0f172a", color: "#f8fafc", border: "1px solid #475569" }}>
-                                  <option value="new">New</option>
-                                  <option value="accepted">Accepted</option>
-                                  <option value="packed">Packed</option>
-                                  <option value="out_for_delivery">Out for Delivery</option>
-                                  <option value="delivered">Delivered</option>
-                                  <option value="canceled">Canceled</option>
-                                  <option value="failed_payment">Failed Payment</option>
-                                  <option value="refund_request">Refund Request</option>
-                                </select>
-                                <button onClick={() => setMessage("Calling customer...")} style={{ padding: "8px 12px", background: "#0ea5e9", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}>Call Customer</button>
-                                <button 
-                                  onClick={async () => {
-                                    setMessage("Retrieving customer credentials...");
-                                    const cust = adminCustomers.find(c => c.phone === o.customerPhone);
-                                    if (!cust || !cust.email) return setMessage("Client Email Not Provided in Registry!");
-                                    setMessage("Transmitting Digital Invoice securely...");
-                                    const res = await fetch("/api/email", {
-                                       method: "POST", body: JSON.stringify({
-                                          action: "resend_invoice",
-                                          email: cust.email,
-                                          orderDetails: { id: o.id, total: o.total, date: new Date(o.createdAt).toLocaleString(), items: Object.keys(o.items || {}).map(k=>`${o.items[k]?.qty}x ${o.items[k]?.name}`).join('\n') }
-                                       })
-                                    });
-                                    const d = await res.json();
-                                    setMessage(d.message || d.error);
-                                  }} 
-                                  style={{ padding: "8px 12px", background: "#475569", color: "white", border: 0, borderRadius: 6, cursor: "pointer" }}
-                                >
-                                  Resend Invoice
-                                </button>
                               </div>
                             </div>
                           )
@@ -1356,7 +1326,7 @@ export default function GroceryUATReadyApp() {
                         {adminProducts.filter(p => p.stock < 10).map(p => (
                           <div key={`low-stock-${p.id}`} style={{ padding: 12, borderRadius: 8, background: "#7f1d1d", color: "white", display: "flex", justifyContent: "space-between" }}>
                             <span>⚠️ Critical: {p.name} drops below configured stock boundary. Only {p.stock} units remaining!</span>
-                            <button onClick={() => setAdminTab("Add/Edit/Inventory")} style={{ background: "transparent", border: "1px solid white", borderRadius: 4, padding: "4px 8px", color: "white", cursor: "pointer", fontWeight: "bold" }}>Review Inventory</button>
+                            <button onClick={() => setAdminTab("Add & Edit")} style={{ background: "transparent", border: "1px solid white", borderRadius: 4, padding: "4px 8px", color: "white", cursor: "pointer", fontWeight: "bold" }}>Review Inventory</button>
                           </div>
                         ))}
                         {adminAlerts.map(a => (
@@ -1372,38 +1342,71 @@ export default function GroceryUATReadyApp() {
                     {adminTab === "Revenue & Ledger" && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                         <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                          <h3 style={{ marginBottom: 12 }}>Add Top-up Ledger Entry</h3>
-                          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                          <h3 style={{ marginBottom: 12 }}>Revenue & Ledger Transactions</h3>
+                          
+                          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
                             <select value={newBatch.productId} onChange={e => setNewBatch({...newBatch, productId: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }}>
-                              <option value="" disabled>Select Product</option>
-                              {adminProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              <option value="" disabled>Select Target SKU Inventory Master...</option>
+                              {adminProducts.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.stock})</option>)}
                             </select>
-                            <input placeholder="Qty (e.g. 50)" type="number" value={newBatch.quantity} onChange={e => setNewBatch({...newBatch, quantity: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 120 }} />
-                            <input placeholder="Total Invoice Cost (£)" type="number" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({...newBatch, costPrice: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 180 }} />
-                            <input placeholder="Supplier" value={newBatch.supplier} onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }} />
-                            <button onClick={() => {
-                              if (!newBatch.productId || !newBatch.quantity || !newBatch.costPrice) {
-                                setMessage("Error: Product, Qty, and Total Cost are required for the ledger.");
-                                return;
+                            
+                            <select value={newBatch.category} onChange={e => setNewBatch({...newBatch, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#0ea5e9", color: "white", border: "1px solid #0284c7" }}>
+                               <option value="stock top-up">Stock Top-Up (Inward)</option>
+                               <option value="customer return">Customer Return (Inward)</option>
+                               <option value="damaged item">Damaged Item (Outward Loss)</option>
+                               <option value="wastage">Wastage (Outward Loss)</option>
+                               <option value="manual correction">Manual Correction</option>
+                            </select>
+                          </div>
+                          
+                          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+                            <input placeholder="Transaction Quantity" type="number" min="1" value={newBatch.quantity} onChange={e => setNewBatch({...newBatch, quantity: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", minWidth: 160 }} />
+                            
+                            {(newBatch.category === "stock top-up" || newBatch.category === "customer return") && (
+                               <>
+                                  <input placeholder={newBatch.category === "stock top-up" ? "Total Invoice Cost (£)" : "Refund Amount (£)"} type="number" min="0" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({...newBatch, costPrice: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", minWidth: 180 }} />
+                                  <input placeholder={newBatch.category === "stock top-up" ? "Supplier Name" : "Processed By"} value={newBatch.supplier} onChange={e => setNewBatch({...newBatch, supplier: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: 1 }} />
+                               </>
+                            )}
+                          </div>
+                          
+                          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                            <button onClick={async () => {
+                              if (!newBatch.productId) return window.alert("Strict Validation: You must securely target an existing product to post a transaction.");
+                              if (!newBatch.quantity) return window.alert("Strict Validation: Missing critical transaction quantity for entry.");
+                              
+                              const parsedQty = parseInt(newBatch.quantity);
+                              if (parsedQty <= 0) return window.alert("System Security: Ledger purely handles Absolute Values. Negative quantities are strictly forbidden. Please use 'Outward / Movement' dropdown logic to apply subtractions naturally.");
+                              
+                              if (newBatch.category === "stock top-up" || newBatch.category === "customer return") {
+                                 if (!newBatch.costPrice || newBatch.costPrice.toString().trim() === "" || parseFloat(newBatch.costPrice) < 0) return window.alert("System Security: Financial Cost/Refund fields are mandatory and must be a positive integer.");
+                                 if (!newBatch.supplier || newBatch.supplier.toString().trim() === "") return window.alert("System Security: Supplier/Processor tracing names are strictly mandatory for compliance tracing.");
                               }
-                              
-                              // Architecturally calculate strictly derived Unit Cost from the Total Invoice bounds
-                              const calculatedUnitCost = parseFloat(newBatch.costPrice) / parseInt(newBatch.quantity);
-                              
-                              fetch("/api/inventory", {
+
+                              let multiplier = 1;
+                              if (["damaged item", "wastage", "manual correction"].includes(newBatch.category)) {
+                                multiplier = -1; // Outward subtraction bounds natively converted
+                              }
+
+                              const b = await fetch("/api/inventory", {
                                 method: "POST",
-                                body: JSON.stringify({...newBatch, costPrice: calculatedUnitCost})
-                              }).then(r => r.json()).then(data => {
-                                if (data.error) {
-                                  setMessage("API Error: " + data.error);
-                                  return;
-                                }
-                                setInventoryBatches([data, ...inventoryBatches]);
-                                setAdminProducts(adminProducts.map(p => p.id === data.productId ? {...p, stock: p.stock + data.quantity} : p));
-                                setMessage("Inventory explicitly logged with derived unit costs.");
-                                setNewBatch({ productId: "", quantity: "", costPrice: "", supplier: "" });
-                              });
-                            }} style={{ padding: "10px 16px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Record Top-up</button>
+                                body: JSON.stringify({
+                                   productId: newBatch.productId,
+                                   quantity: parsedQty * multiplier,
+                                   costPrice: newBatch.costPrice || 0,
+                                   supplier: newBatch.category + " - " + (newBatch.supplier || "System")
+                                })
+                              }).then(r => r.json());
+                              
+                              if (b.error) return setMessage(b.error);
+                              setInventoryBatches([b, ...inventoryBatches]);
+                              
+                              // Automatically fetch the latest products mapping directly mirroring API incrementation bindings!
+                              fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+
+                              setMessage("Ledger securely encoded and Stock updated.");
+                              setNewBatch({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
+                            }} style={{ padding: "10px 16px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, fontWeight: "bold", cursor: "pointer", width: "100%" }}>Commit Transaction Record natively</button>
                           </div>
                         </div>
 
@@ -1547,13 +1550,25 @@ export default function GroceryUATReadyApp() {
                       const buyersMap: Record<string, number> = {};
 
                       adminOrders.forEach(o => {
-                        totalSales += o.total;
-                        if (o.createdAt.startsWith(today)) {
-                          todaySales += o.total;
+                        const refundsForOrder = adminReturns.filter((r: any) => r.orderId === o.id).reduce((sum: number, r: any) => sum + r.refundAmount, 0);
+                        const netTotal = Math.max(0, o.total - refundsForOrder);
+
+                        totalSales += netTotal;
+
+                        const dateRaw = o.createdAt || o.date || new Date().toISOString();
+                        let orderDateISO = "";
+                        try {
+                           orderDateISO = new Date(dateRaw).toISOString();
+                        } catch (err) {
+                           return;
+                        }
+
+                        if (orderDateISO.startsWith(today)) {
+                          todaySales += netTotal;
                           todayOrdersCount++;
                         }
-                        if (o.createdAt >= lastWeek) {
-                          weeklySales += o.total;
+                        if (orderDateISO >= lastWeek) {
+                          weeklySales += netTotal;
                         }
                         
                         if (o.buyerId) {
@@ -1614,10 +1629,6 @@ export default function GroceryUATReadyApp() {
                             <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
                               <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Avg Basket Value</div>
                               <div style={{ fontSize: 24, fontWeight: "bold" }}>£{avgBasket}</div>
-                            </div>
-                            <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Repeat Customers</div>
-                              <div style={{ fontSize: 24, fontWeight: "bold", color: "#fcd34d" }}>{repeatCustomers}</div>
                             </div>
                             <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
                               <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Promo Performance</div>
@@ -1895,7 +1906,7 @@ export default function GroceryUATReadyApp() {
                 <h3>Your Recent Orders</h3>
                 {orderHistory[buyer.mobile] && orderHistory[buyer.mobile].length > 0 ? (
                   <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-                    {orderHistory[buyer.mobile].map((o, i) => (
+                    {[...orderHistory[buyer.mobile]].reverse().map((o, i) => (
                       <div key={i} style={{ background: "#0f172a", padding: 18, borderRadius: 10, border: "1px solid #334155", position: "relative" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "flex-start" }}>
                           <div>
@@ -1994,9 +2005,97 @@ export default function GroceryUATReadyApp() {
             )}
           </div>
         )}
+
+        {/* Global Admin Returns Modal */}
+        {returnForm?.active && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ background: "#0f172a", padding: 24, borderRadius: 16, width: 450, border: "1px solid #334155" }}>
+              <h2 style={{ marginBottom: 16 }}>Process Return</h2>
+              <p style={{ color: "#94a3b8", marginBottom: 12 }}>Order #{returnForm.targetOrder.id} - {returnForm.targetItem.name}</p>
+              
+              <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13 }}>Quantity to Return (Max {returnForm.targetItem.qty - adminReturns.filter((r: any) => r.orderId === returnForm.targetOrder.id && r.productName === returnForm.targetItem.name).reduce((a:any, b:any) => a + b.quantity, 0)})</label>
+              <input type="number" min="1" value={returnForm.qty} onChange={e => {
+                 const allowedMax = returnForm.targetItem.qty - adminReturns.filter((r: any) => r.orderId === returnForm.targetOrder.id && r.productName === returnForm.targetItem.name).reduce((a:any, b:any) => a + b.quantity, 0);
+                 const newQty = Math.min(allowedMax, Math.max(1, parseInt(e.target.value) || 1));
+                 setReturnForm({...returnForm, qty: newQty, refund: newQty * returnForm.targetItem.price});
+              }} style={{ width: "100%", padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", marginBottom: 12 }} />
+              <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13 }}>Return Reason</label>
+              <select value={returnForm.reason} onChange={e => setReturnForm({...returnForm, reason: e.target.value})} style={{ width: "100%", padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", marginBottom: 12 }}>
+                 <option value="Defective / Damaged">Defective / Damaged</option>
+                 <option value="Incorrect Item">Incorrect Item</option>
+                 <option value="Customer Changed Mind">Customer Changed Mind</option>
+                 <option value="Expired">Expired</option>
+              </select>
+
+              <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13 }}>Item Condition</label>
+              <select value={returnForm.condition} onChange={e => {
+                 const isSealed = e.target.value === "Sealed / Resellable";
+                 setReturnForm({...returnForm, condition: e.target.value, restock: isSealed ? true : returnForm.restock});
+              }} style={{ width: "100%", padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", marginBottom: 12 }}>
+                 <option value="Damaged / Unsellable">Damaged / Unsellable</option>
+                 <option value="Sealed / Resellable">Sealed / Resellable</option>
+                 <option value="Opened / Good">Opened / Good</option>
+              </select>
+
+              <label style={{ display: "block", marginBottom: 4, color: "#94a3b8", fontSize: 13 }}>Refund Amount (£)</label>
+              <input type="number" min="0" step="0.01" value={returnForm.refund} onChange={e => setReturnForm({...returnForm, refund: parseFloat(e.target.value) || 0})} style={{ width: "100%", padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", marginBottom: 12 }} />
+              
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                 <input type="checkbox" checked={returnForm.restock} onChange={e => {
+                    const willRestock = e.target.checked;
+                    if (window.confirm(`Are you sure you want to ${willRestock ? "ENABLE" : "DISABLE"} returning this product to active inventory?`)) {
+                       setReturnForm({...returnForm, restock: willRestock});
+                    }
+                 }} style={{ width: 18, height: 18 }} />
+                 <span style={{ fontSize: 14 }}>Return product to active inventory (Restock)</span>
+              </label>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                 <button onClick={() => setReturnForm(null)} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "#334155", color: "white", border: 0, cursor: "pointer", transition: "transform 0.1s" }}>Cancel</button>
+                 <button onClick={async () => {
+                    if (!window.confirm(`Warning: You are about to permanently record this return and refund £${returnForm.refund.toFixed(2)}. Are you completely sure you want to proceed?`)) {
+                       return;
+                    }
+                    const payload = {
+                         orderId: returnForm.targetOrder.id,
+                         productName: String(returnForm.targetItem.name),
+                         quantity: returnForm.qty,
+                         reason: String(returnForm.reason),
+                         condition: String(returnForm.condition),
+                         refundAmount: returnForm.refund || 0,
+                         restocked: Boolean(returnForm.restock),
+                         processedBy: "Admin"
+                    };
+                    try {
+                      const r = await fetch("/api/returns", {
+                         method: "POST",
+                         headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify(payload)
+                      }).then(res => res.json());
+                      
+                      if (r.error) {
+                        setMessage("Return Failed: " + r.error);
+                      } else if (r.success) {
+                        setMessage(`Return Processed Successfully for Order #${returnForm.targetOrder.id}`);
+                        setTimeout(() => setMessage(""), 2000);
+                        setAdminReturns(prev => [...prev, r.returnRecord]);
+                        setReturnForm(null);
+                        // Force silent update to frontend models instantly
+                        if (returnForm.restock) {
+                           setAdminProducts(prev => prev.map(p => p.name === returnForm.targetItem.name ? { ...p, stock: p.stock + returnForm.qty } : p));
+                        }
+                      }
+                    } catch(err) {
+                      setMessage(`Return Failed: API offline or server crashed`);
+                    }
+                 }} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "#ef4444", color: "white", border: 0, cursor: "pointer", fontWeight: "bold", transition: "transform 0.1s" }}>Confirm Return</button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
-      {route !== "admin" && (
+      {!adminLogged && route !== "admin" && (
       <aside style={{ padding: 20, borderLeft: "1px solid #334155", overflowY: "auto" }}>
         <h3>Cart</h3>
 
@@ -2008,7 +2107,7 @@ export default function GroceryUATReadyApp() {
               <div key={x.id} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                   <div>
-                    {x.name} <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 4 }}>x{x.qty}</span>
+                     {x.name} <span style={{ color: "#94a3b8", fontSize: 13, marginLeft: 4 }}>x{x.qty}</span>
                   </div>
                   <div style={{ fontWeight: 600 }}>
                     £{(itemsMap[x.id]?.total || 0).toFixed(2)}
@@ -2018,6 +2117,7 @@ export default function GroceryUATReadyApp() {
                   Saving: £{(itemsMap[x.id]?.savings || 0).toFixed(2)}
                 </div>
 
+                {!adminLogged && (
                 <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                   <button
                     onClick={() => decreaseQty(x.id)}
@@ -2047,6 +2147,7 @@ export default function GroceryUATReadyApp() {
                     +
                   </button>
                 </div>
+                )}
               </div>
             ))}
 
@@ -2078,6 +2179,10 @@ export default function GroceryUATReadyApp() {
                   onClick={() => {
                     if (cart.length === 0) {
                       setMessage("Cart is empty");
+                      return;
+                    }
+                    if (cart.some(x => x.price === 0)) {
+                      window.alert("Validation Error: Item with £0.00 detected. You must contact an Admin to manually override and confirm this Zero-Cost item before transaction processing.");
                       return;
                     }
                     setRoute("checkout");
