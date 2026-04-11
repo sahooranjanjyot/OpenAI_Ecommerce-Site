@@ -1594,9 +1594,9 @@ export default function GroceryUATReadyApp() {
                       const repeatCustomers = Object.values(buyersMap).filter(qty => qty > 1).length;
 
                       const sortedProducts = Object.entries(allSoldItems)
-                        .sort((a, b) => b[1] - a[1])
+                        .sort((a: any, b: any) => b[1] - a[1])
                         .map(entry => {
-                           const p = adminProducts.find(p => p.id === entry[0]);
+                           const p = adminProducts.find(p => String(p.id) === entry[0]);
                            return p ? { name: p.name, qty: entry[1] } : null;
                         }).filter(Boolean);
 
@@ -1864,6 +1864,16 @@ export default function GroceryUATReadyApp() {
                          if (existing) return prev.map(c => c.phone === data.customer.phone ? data.customer : c);
                          return [...prev, data.customer];
                       });
+                    }
+                    if ((activeBuyer as any).email && data.order) {
+                      fetch("/api/email", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                           email: (activeBuyer as any).email,
+                           orderDetails: data.order
+                        })
+                      }).catch(() => {});
                     }
                     const orderNo = data.order?.id ? `ORD-${String(data.order.id).padStart(5, '0')}` : `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
                     setMessage(`Order ${orderNo} successful • card verified via token [${tokenId.substring(0,8)}]`);
