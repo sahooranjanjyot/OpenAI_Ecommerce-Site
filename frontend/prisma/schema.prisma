@@ -18,6 +18,7 @@ model Product {
   stock       Float    @default(0)
   unit        String   @default("Piece")
   image       String?
+  barcode     String?  @unique
   description String?
   enabled     Boolean  @default(true)
   hidden      Boolean  @default(false)
@@ -93,4 +94,16 @@ model Return {
   restocked    Boolean
   processedBy  String
   createdAt    DateTime @default(now())
+}
+
+model Employee {
+  id        Int      @id @default(autoincrement())
+  userId    String   @unique
+  password  String
+  name      String
+  role      String   @default("cashier")
+  modules   String   @default("Instore POS,Orders")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

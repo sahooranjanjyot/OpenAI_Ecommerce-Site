@@ -14,7 +14,7 @@ export async function POST(req: Request) {
       data: {
         orderId: parseInt(orderId),
         productName,
-        quantity: parseInt(quantity),
+        quantity: parseFloat(quantity),
         reason,
         condition,
         refundAmount: parseFloat(refundAmount) || 0,
@@ -30,10 +30,20 @@ export async function POST(req: Request) {
          where: { name: productName }
        });
        if (targetProduct) {
-         await prisma.product.update({
-           where: { id: targetProduct.id },
-           data: { stock: { increment: parseInt(quantity) } }
-         });
+         await prisma.$transaction([
+           prisma.product.update({
+             where: { id: targetProduct.id },
+             data: { stock: { increment: parseFloat(quantity) } }
+           }),
+           prisma.inventoryBatch.create({
+             data: {
+               productId: targetProduct.id,
+               quantity: parseFloat(quantity),
+               channel: "return",
+               supplier: "Customer Restock"
+             } as any
+           })
+         ]);
        }
     }
 

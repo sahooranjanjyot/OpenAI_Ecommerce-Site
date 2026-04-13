@@ -45,23 +45,46 @@ export async function POST(req: Request) {
     const batch = await prisma.inventoryBatch.create({
       data: {
         productId: pId,
-        quantity: parseInt(body.quantity),
-        remaining: parseInt(body.quantity),
+        quantity: parseFloat(body.quantity),
+        remaining: parseFloat(body.quantity),
         costPrice: parseFloat(body.costPrice),
-        supplier: body.supplier || ""
-      },
+        supplier: body.supplier || "",
+        channel: "admin"
+      } as any,
       include: { product: true }
     });
 
     // Also strictly update the total product stock automatically
     await prisma.product.update({
       where: { id: pId },
-      data: { stock: { increment: parseInt(body.quantity) } }
+      data: { stock: { increment: parseFloat(body.quantity) } }
     });
 
     return NextResponse.json(batch);
   } catch (error) {
     console.error("INVENTORY BATCH POST ERROR:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to create inventory batch" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const id = parseInt(url.searchParams.get("id") || "0");
+    if (!id) throw new Error("Transaction ID undefined");
+
+    const batch = await prisma.inventoryBatch.findUnique({ where: { id } });
+    if (!batch) throw new Error("Ledger transaction physically missing from DB.");
+
+    await prisma.product.update({
+      where: { id: batch.productId },
+      data: { stock: { decrement: batch.quantity } }
+    });
+
+    await prisma.inventoryBatch.delete({ where: { id } });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("INVENTORY VOID ERROR:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to void transaction" }, { status: 500 });
   }
 }

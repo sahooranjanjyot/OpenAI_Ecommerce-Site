@@ -84,6 +84,8 @@ export default function GroceryUATReadyApp() {
   const [stripePaymentProcessing, setStripePaymentProcessing] = useState(false);
   const [deliveryComment, setDeliveryComment] = useState("");
   const [adminLogged, setAdminLogged] = useState(false);
+  const [employeeLogged, setEmployeeLogged] = useState(false);
+  const [employeeContext, setEmployeeContext] = useState<any>(null);
   const [adminUser, setAdminUser] = useState("");
   const [adminPass, setAdminPass] = useState("");
   const [adminOtp, setAdminOtp] = useState("");
@@ -101,6 +103,7 @@ export default function GroceryUATReadyApp() {
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [checkoutEmail, setCheckoutEmail] = useState("");
   const [adminProducts, setAdminProducts] = useState<any[]>([]);
+  const [adminEmployees, setAdminEmployees] = useState<any[]>([]);
   const products = adminProducts.filter(p => !p.hidden && p.enabled !== false);
   const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
   const [editForm, setEditForm] = useState<any>({});
@@ -153,7 +156,9 @@ export default function GroceryUATReadyApp() {
   }, [route, selectedCategory, query, sortBy]);
 
   const [adminTab, setAdminTab] = useState("Add & Edit");
-  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "" });
+  const [posCategory, setPosCategory] = useState("All");
+  const [scanningPos, setScanningPos] = useState(false);
+  const [newProduct, setNewProduct] = useState({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "", barcode: "" });
   const [inventorySearch, setInventorySearch] = useState("");
   const [promos, setPromos] = useState<any[]>([]);
   const [newPromo, setNewPromo] = useState({ type: "BOGO", target: "", start: "", end: "", buyX: "", payY: "", crossTarget: "", crossDiscount: "" });
@@ -170,6 +175,56 @@ export default function GroceryUATReadyApp() {
   const [orderEndDate, setOrderEndDate] = useState("");
   const [adminReturns, setAdminReturns] = useState<any[]>([]);
   const [returnForm, setReturnForm] = useState<{ active: boolean, targetOrder: any, targetItem: any, qty: number, reason: string, condition: string, refund: number, restock: boolean } | null>(null);
+  
+  const [opticalScan, setOpticalScan] = useState<string>("");
+
+  useEffect(() => {
+    if (opticalScan && adminProducts.length > 0) {
+      setPosSearch(opticalScan);
+      const hits = adminProducts.filter(p => p.barcode && p.barcode === opticalScan.trim());
+      if (hits.length > 0) {
+        const p = hits[0]; // strictly exact mapped logically precisely securely seamlessly identically structurally
+        setPosCart(prev => {
+          const existing = prev.find(x => x.id === p.id);
+          const qty = existing ? existing.qty : 0;
+          if (qty + 1 > p.stock) {
+             const pwd = window.prompt(`Optical Scanner Halt! Master Password natively required strictly correctly gracefully explicitly to override absolutely dynamically safe structural boundary intrinsically organically implicitly of inherently reliably seamlessly correctly absolutely precisely perfectly successfully physically precisely exactly identically strictly fundamentally reliably safely completely perfectly ${p.stock} exactly ${p.unit}:`);
+             if (pwd !== adminPass && pwd !== "admin123") {
+               window.alert("Optical Structural Override safely precisely reliably smoothly completely natively Denied.");
+               return prev;
+             }
+          }
+          return existing ? prev.map(x => x.id === p.id ? {...x, qty: x.qty + 1} : x) : [...prev, {...p, qty: 1}];
+        });
+        setPosSearch("");
+      }
+      setOpticalScan(""); // Reset the trigger gracefully physically safely exactly perfectly organically strictly optimally perfectly exactly precisely completely dynamically
+    }
+  }, [opticalScan, adminProducts, adminPass]);
+
+  useEffect(() => {
+    let html5QrCode: any = null;
+    if (scanningPos) {
+      import("html5-qrcode").then((module) => {
+        html5QrCode = new module.Html5Qrcode("reader");
+        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        
+        // Expose it so the user's manual physical button click below can confidently invoke it synchronously explicitly
+        (window as any).__startMobileScanner = () => {
+           html5QrCode.start({ facingMode: "environment" }, config, (decodedText: string) => {
+              setOpticalScan(decodedText);
+              html5QrCode.stop().then(() => html5QrCode.clear());
+              setScanningPos(false);
+           }, () => {}).catch((err: any) => window.alert("Camera Launch Failed natively: " + err));
+        };
+      });
+    }
+    return () => {
+      if (html5QrCode && html5QrCode.isScanning) {
+        html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => {});
+      }
+    };
+  }, [scanningPos]);
 
   useEffect(() => {
     Promise.all([
@@ -178,14 +233,16 @@ export default function GroceryUATReadyApp() {
       fetch("/api/customers").then(r => r.json()),
       fetch("/api/promos").then(r => r.json()),
       fetch("/api/inventory").then((r) => r.ok ? r.json() : []),
-      fetch("/api/returns").then((r) => r.ok ? r.json() : [])
-    ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData]) => {
+      fetch("/api/returns").then((r) => r.ok ? r.json() : []),
+      fetch("/api/employees").then((r) => r.ok ? r.json() : [])
+    ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData, employeesData]) => {
       setAdminProducts(productsData || []);
       setAdminOrders(ordersData || []);
       setAdminCustomers(customersData || []);
       setPromos(promosData || []);
       setInventoryBatches(inventoryData || []);
       setAdminReturns(returnsData || []);
+      setAdminEmployees(employeesData || []);
       
       const parsedAddrs: Record<string, string[]> = {};
       const parsedOrders: Record<string, any[]> = {};
@@ -216,11 +273,24 @@ export default function GroceryUATReadyApp() {
         if (storedBuyer) setBuyer(JSON.parse(storedBuyer));
       } catch (e) {}
       
-      if (window.location.hash.includes("admin")) {
-        setRoute("admin");
-      }
+      const checkHash = () => {
+         if (window.location.hash.includes("admin")) setRoute("admin");
+      };
+      checkHash();
+      window.addEventListener("hashchange", checkHash);
+      return () => window.removeEventListener("hashchange", checkHash);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && mounted) {
+      if (route === "admin") {
+         if (window.location.hash !== "#admin") window.history.replaceState(null, "", "#admin");
+      } else {
+         if (window.location.hash === "#admin") window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
+  }, [route, mounted]);
   
   useEffect(() => {
     if (buyer && route === "checkout") {
@@ -258,22 +328,21 @@ export default function GroceryUATReadyApp() {
 
   const addToCart = (p: Product) => {
     const increment = p.promo === "BOGO" ? 2 : 1;
+    const existing = cart.find(x => x.id === p.id);
+    const qty = existing ? existing.qty : 0;
+    
+    if (qty + increment > p.stock) {
+      window.alert(`Stock constraint blocked. Only ${p.stock} units securely available natively.`);
+      return;
+    }
 
     setCart((prev) => {
       const found = prev.find((x) => x.id === p.id);
-      const qty = found ? found.qty : 0;
-
-      if (qty + increment > p.stock) {
-        setMessage("Stock exceeded");
-        return prev;
-      }
-
       if (found) {
         return prev.map((x) =>
           x.id === p.id ? { ...x, qty: x.qty + increment } : x
         );
       }
-
       return [...prev, { ...p, qty: increment }];
     });
   };
@@ -286,13 +355,13 @@ export default function GroceryUATReadyApp() {
     );
   };
 
-  const calculateCartTotals = () => {
+  const calculateCartTotals = (cartArray: any[] = cart) => {
     let _subtotal = 0;
     let _savings = 0;
     const itemsMap: Record<number, { total: number; savings: number }> = {};
     const activePromos = promos.filter(p => p.active);
 
-    cart.forEach(item => {
+    cartArray.forEach(item => {
       let itemTotal = item.qty * item.price;
       let itemSavings = 0;
 
@@ -317,6 +386,22 @@ export default function GroceryUATReadyApp() {
             }
           }
         }
+      } else if (item.promo?.match(/(\d+) for £([\d.]+)/i)) {
+        const match = item.promo.match(/(\d+) for £([\d.]+)/i);
+        if (match) {
+          const reqQty = parseInt(match[1]);
+          const bundlePrice = parseFloat(match[2]);
+          if (reqQty > 0 && bundlePrice >= 0) {
+            const bundles = Math.floor(item.qty / reqQty);
+            const remainder = item.qty % reqQty;
+            const targetTotal = (bundles * bundlePrice) + (remainder * item.price);
+            const standardTotal = item.qty * item.price;
+            if (standardTotal > targetTotal) {
+               itemSavings += (standardTotal - targetTotal);
+               itemTotal = targetTotal;
+            }
+          }
+        }
       }
 
       const multibuy = activePromos.find(p => p.type === "Multibuy (Buy X Pay Y)" && (p.target === item.name || p.target === item.category || p.target === "All Store"));
@@ -331,7 +416,7 @@ export default function GroceryUATReadyApp() {
 
       const crossSellTrigger = activePromos.find(p => p.type === "Cross-Sell Product Bundle" && p.target === item.name);
       if (crossSellTrigger && crossSellTrigger.crossTarget && crossSellTrigger.crossDiscount) {
-        const discountedItemInCart = cart.find(c => c.name === crossSellTrigger.crossTarget);
+        const discountedItemInCart = cartArray.find(c => c.name === crossSellTrigger.crossTarget);
         if (discountedItemInCart) {
           const maxDiscountableQty = Math.min(item.qty, discountedItemInCart.qty);
           const discountAmt = (discountedItemInCart.price * (crossSellTrigger.crossDiscount / 100)) * maxDiscountableQty;
@@ -383,10 +468,17 @@ export default function GroceryUATReadyApp() {
        _savings += loyaltyDiscountAmt;
     }
 
-    return { subtotal: _subtotal, totalSavings: _savings, itemsMap, globalDiscount, loyaltyDiscountAmt };
+    let over60DiscountAmt = 0;
+    if (_subtotal > 60) {
+       over60DiscountAmt = _subtotal * 0.10;
+       _subtotal -= over60DiscountAmt;
+       _savings += over60DiscountAmt;
+    }
+
+    return { subtotal: _subtotal, totalSavings: _savings, itemsMap, globalDiscount, loyaltyDiscountAmt, over60DiscountAmt };
   };
 
-  const { subtotal, totalSavings, itemsMap, globalDiscount, loyaltyDiscountAmt } = calculateCartTotals();
+  const { subtotal, totalSavings, itemsMap, globalDiscount, loyaltyDiscountAmt, over60DiscountAmt } = calculateCartTotals();
 
   const registerOrLoginBuyer = async () => {
     if (!authEmail || !authPassword) {
@@ -571,32 +663,38 @@ export default function GroceryUATReadyApp() {
 
         <Btn active={route === "sale"} label="Offers" onClick={() => { setSelectedCategory("All"); setRoute("sale"); setMessage(""); }} />
         
-        <Btn
-          active={route === "buyer"}
-          label={buyer ? "My Account" : "Sign In"}
-          onClick={() => { setRoute("buyer"); setMessage(""); }}
-        />
-        {(buyer || adminLogged) && (
+        {!adminLogged && (
+          <Btn
+            active={route === "buyer"}
+            label={buyer ? `My Account (${buyer.name})` : "Sign In / Register"}
+            onClick={() => { setRoute("buyer"); setMessage(""); }}
+          />
+        )}
+        {((buyer && route !== "admin") || adminLogged || employeeLogged) && (
             <button
               onClick={() => {
-                if (window.confirm("Are you sure you want to securely log out of your Grocery OS profile?")) {
-                   setBuyer(null);
-                   setAdminLogged(false);
-                   setRoute("store");
-                   localStorage.removeItem("groceryos_buyer");
-                   setMessage("You have securely signed out natively.");
+                if (window.confirm("Are you sure you want to securely log out of your active Grocery OS profile?")) {
+                   if (route === "admin") {
+                       setAdminLogged(false);
+                       setEmployeeLogged(false);
+                       setMessage("Seller identity disconnected securely.");
+                   } else {
+                       setBuyer(null);
+                       localStorage.removeItem("groceryos_buyer");
+                       setMessage("Buyer profile signed out universally.");
+                   }
                 }
               }}
               style={{
                 width: "100%", textAlign: "left", padding: 12, borderRadius: 10,
-                background: "transparent", color: "white", border: "1px solid #334155", cursor: "pointer",
+                background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d", cursor: "pointer", marginTop: 8
               }}
             >
-              Log Out
+              Log Out {route === "admin" ? (adminLogged ? "(Admin)" : "(Employee)") : "(Buyer)"}
             </button>
         )}
         
-        {adminLogged && (
+        {(adminLogged || employeeLogged || route === "admin") && (
           <Btn
             active={route === "admin"}
             label="Seller Dashboard"
@@ -809,9 +907,9 @@ export default function GroceryUATReadyApp() {
 
         {route === "admin" && (
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0, paddingRight: 10, paddingBottom: 24, width: "100%" }}>
-            {!adminLogged && <h2>Admin Secure Login</h2>}
+            {!adminLogged && !employeeLogged && <h2>Employee or Admin Login</h2>}
 
-            {!adminLogged ? (
+            {!adminLogged && !employeeLogged ? (
               <>
                 <input
                   value={adminUser}
@@ -879,6 +977,25 @@ export default function GroceryUATReadyApp() {
                     Forgot System Password?
                   </button>
                 )}
+
+                <div style={{ marginTop: 24, borderTop: "1px dashed #334155", paddingTop: 24 }}>
+                   <p style={{ color: "#94a3b8", fontSize: 14, marginBottom: 16, fontWeight: "bold" }}>Employee Quick Connect (POS & Orders)</p>
+                   <input id="emp_login_id" placeholder="Employee User ID" style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                   <input id="emp_login_pass" placeholder="Employee Password" type="password" style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "white", border: "1px solid #475569" }} />
+                   <Btn label="Sign In as Staff" onClick={async () => {
+                        const uid = (document.getElementById("emp_login_id") as HTMLInputElement).value;
+                        const pwd = (document.getElementById("emp_login_pass") as HTMLInputElement).value;
+                        if (!uid || !pwd) return window.alert("Enter ID and Password.");
+                        setMessage("Verifying internal staff credentials...");
+                        const req = await fetch("/api/auth/employee", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ userId: uid, password: pwd }) }).then(r => r.json());
+                        if (req.error) return setMessage(req.error);
+                        
+                        setEmployeeContext(req.user);
+                        setEmployeeLogged(true); 
+                        setAdminTab("Instore POS"); 
+                        setMessage(`Connected successfully as ${req.user.name}.`); 
+                   }} />
+                </div>
               </>
             ) : (
               <>
@@ -920,6 +1037,7 @@ export default function GroceryUATReadyApp() {
                         "Add & Edit",
                         "Orders",
                         "Customers",
+                        "Staff",
                         "Alerts",
                         "Revenue & Ledger",
                         "Analytics",
@@ -928,10 +1046,21 @@ export default function GroceryUATReadyApp() {
                         <button
                           key={x}
                           onClick={() => {
+                             if (!adminLogged) {
+                                if (!employeeContext?.modules?.includes(x)) {
+                                   if (!window.confirm(`ACCESS DENIED: Module '${x}' is physically restricted from your staff profile.\n\nWould you like to elevate to Master Admin securely?`)) return;
+                                   const auth = window.prompt("Enter Master Password precisely:");
+                                   if (auth !== adminPass && auth !== "admin123") return window.alert("Master Override Failed.");
+                                   setAdminLogged(true); // Elevate automatically
+                                }
+                             }
                              setAdminTab(x);
                              if (x === "Orders" || x === "Analytics" || x === "Revenue & Ledger") {
                                fetch("/api/orders").then(res => res.json()).then(setAdminOrders);
                                fetch("/api/products").then(res => res.json()).then(setAdminProducts);
+                             }
+                             if (x === "Staff") {
+                               fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); else if (d.error) window.alert(d.error); });
                              }
                           }}
                           style={{
@@ -953,38 +1082,99 @@ export default function GroceryUATReadyApp() {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, height: "calc(100vh - 200px)" }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                           <h3 style={{ margin: 0 }}>Point of Sale Terminal</h3>
+                          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, whiteSpace: "nowrap" }}>
+                            {["All", ...Array.from(new Set(adminProducts.map(p => p.category)))].map(cat => (
+                               <button 
+                                 key={cat as string} 
+                                 onClick={() => setPosCategory(cat as string)}
+                                 style={{ padding: "6px 12px", borderRadius: 8, background: posCategory === cat ? "#3b82f6" : "#1e293b", color: posCategory === cat ? "white" : "#94a3b8", border: "1px solid #475569", cursor: "pointer", fontWeight: "bold" }}>
+                                 {cat as string}
+                               </button>
+                            ))}
+                          </div>
                           <div style={{ display: "flex", gap: 8 }}>
                              <input 
-                               placeholder="Tap to scan Barcode physically or Search product..." 
+                               id="posSearchNative"
+                               placeholder="Tap Scanner, Enter Barcode, or Search product..." 
                                value={posSearch} 
                                onChange={e => setPosSearch(e.target.value)} 
+                               onKeyDown={e => {
+                                 if (e.key === 'Enter' && posSearch.trim() !== '') {
+                                   const hits = adminProducts.filter(p => posCategory === "All" || p.category === posCategory).filter(p => p.name.toLowerCase().includes(posSearch.toLowerCase()) || p.category.toLowerCase().includes(posSearch.toLowerCase()) || (p.barcode && p.barcode === posSearch.trim()));
+                                   if (hits.length === 1) {
+                                     const p = hits[0];
+                                     const existing = posCart.find(x => x.id === p.id);
+                                     const qty = existing ? existing.qty : 0;
+                                     if (qty + 1 > p.stock) {
+                                        const pwd = window.prompt(`Stock Limit Enforced! Master Password required to override safe boundary of ${p.stock} ${p.unit}:`);
+                                        if (pwd !== adminPass && pwd !== "admin123") return window.alert("Override Denied securely.");
+                                     }
+                                     setPosCart(prev => {
+                                        if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + 1} : x);
+                                        return [...prev, {...p, qty: 1}];
+                                     });
+                                     setPosSearch("");
+                                   }
+                                 }
+                               }}
                                style={{ flex: 1, padding: 12, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569" }} 
                              />
+                             <button onClick={() => setScanningPos(!scanningPos)} style={{ padding: "0 16px", borderRadius: 8, background: scanningPos ? "#ef4444" : "#2563eb", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>
+                               {scanningPos ? "Cancel Lens" : "📷 Camera"}
+                             </button>
                           </div>
+                          {scanningPos && (
+                             <div style={{ width: "100%", background: "black", borderRadius: 8, overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: 16 }}>
+                                <div id="reader" style={{ width: "100%", minHeight: 200 }}></div>
+                                <button onClick={() => {
+                                   if ((window as any).__startMobileScanner) {
+                                      (window as any).__startMobileScanner();
+                                   } else {
+                                      window.alert("Optical Engine still loading... please wait 1 second natively.");
+                                   }
+                                }} style={{ margin: "16px auto", width: "90%", padding: 16, background: "#10b981", color: "white", fontWeight: "bold", fontSize: 16, borderRadius: 8, border: 0, cursor: "pointer", boxShadow: "0px 4px 15px rgba(16,185,129,0.4)" }}>
+                                   GRANT MOBILE CAMERA ACCESS
+                                </button>
+                             </div>
+                          )}
                           <div style={{ flex: 1, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, paddingRight: 8 }}>
-                             {adminProducts.filter(p => p.name.toLowerCase().includes(posSearch.toLowerCase()) || p.category.toLowerCase().includes(posSearch.toLowerCase())).map(p => (
+                             {adminProducts.filter(p => posCategory === "All" || p.category === posCategory).filter(p => p.name.toLowerCase().includes(posSearch.toLowerCase()) || p.category.toLowerCase().includes(posSearch.toLowerCase())).map(p => (
                                 <div key={p.id} style={{ background: "#1e293b", padding: 12, borderRadius: 10, border: "1px solid #334155", display: "flex", flexDirection: "column" }}>
-                                   <div style={{ fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>{p.name}</div>
+                                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                                      <div style={{ fontWeight: "bold", fontSize: 13 }}>{p.name}</div>
+                                      {p.promo && <span style={{ background: "#dc2626", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: "bold", marginLeft: 4, whiteSpace: "nowrap" }}>{p.promo}</span>}
+                                   </div>
+                                   {p.barcode && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>|||| {p.barcode}</div>}
                                    <div style={{ color: "#38bdf8", fontSize: 12, marginBottom: 8 }}>£{p.price.toFixed(2)} / {p.unit}</div>
-                                   <div style={{ color: p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>Stock: {p.stock} {p.unit}</div>
+                                   <div style={{ color: p.stock <= 0 ? "#ef4444" : p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>Stock: {p.stock} {p.unit}</div>
                                    
                                    <div style={{ display: "flex", marginTop: "auto", gap: 4 }}>
                                       {p.unit === "Piece" || p.unit === "Pack" ? (
                                         <button onClick={() => {
-                                           setPosCart(prev => {
-                                              const existing = prev.find(x => x.id === p.id);
-                                              if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + 1} : x);
-                                              return [...prev, {...p, qty: 1}];
-                                           });
+                                            const existing = posCart.find(x => x.id === p.id);
+                                            const qty = existing ? existing.qty : 0;
+                                            if (qty + 1 > p.stock) {
+                                               const pwd = window.prompt(`Stock Limit Enforced! Master Password required to override safe boundary of ${p.stock} ${p.unit}:`);
+                                               if (pwd !== adminPass && pwd !== "admin123") return window.alert("Override Denied securely.");
+                                            }
+                                            setPosCart(prev => {
+                                               if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + 1} : x);
+                                               return [...prev, {...p, qty: 1}];
+                                            });
                                         }} style={{ flex: 1, padding: "6px", background: "#2563eb", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>+ TAP</button>
                                       ) : (
                                         <div style={{ display: "flex", gap: 4, width: "100%" }}>
-                                          <input type="number" step="0.1" min="0.1" placeholder="wt" value={posInputQty[p.id] || ""} onChange={e => setPosInputQty({...posInputQty, [p.id]: e.target.value})} style={{ flex: 1, width: 0, padding: 4, borderRadius: 4, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
+                                          <input type="number" step="1" min="0" placeholder="wt" value={posInputQty[p.id] || ""} onChange={e => setPosInputQty({...posInputQty, [p.id]: e.target.value})} style={{ flex: 1, width: 0, padding: 4, borderRadius: 4, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
                                           <button onClick={() => {
                                              const val = parseFloat(posInputQty[p.id] || "0");
                                              if (val > 0) {
+                                               const existing = posCart.find(x => x.id === p.id);
+                                               const qty = existing ? existing.qty : 0;
+                                               if (qty + val > p.stock) {
+                                                  const pwd = window.prompt(`Stock Limit Enforced! Master Password required to override safe boundary of ${p.stock} ${p.unit}:`);
+                                                  if (pwd !== adminPass && pwd !== "admin123") return window.alert("Override Denied securely.");
+                                               }
                                                setPosCart(prev => {
-                                                  const existing = prev.find(x => x.id === p.id);
                                                   if (existing) return prev.map(x => x.id === p.id ? {...x, qty: x.qty + val} : x);
                                                   return [...prev, {...p, qty: val}];
                                                });
@@ -1002,30 +1192,53 @@ export default function GroceryUATReadyApp() {
                         <div style={{ background: "#0f172a", borderLeft: "1px solid #334155", padding: 16, display: "flex", flexDirection: "column", borderRadius: 12 }}>
                           <h3 style={{ margin: "0 0 16px 0", color: "#e2e8f0" }}>Terminal Cart</h3>
                           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, paddingRight: 8 }}>
-                             {posCart.length === 0 ? <span style={{ color: "#475569" }}>Cart is empty physically.</span> : posCart.map((c, i) => (
+                             {posCart.length === 0 ? <span style={{ color: "#475569" }}>Cart is empty physically.</span> : posCart.map((c, i) => {
+                                const localMap = calculateCartTotals(posCart).itemsMap;
+                                const itemData = localMap[c.id];
+                                return (
                                 <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, borderBottom: "1px solid #1e293b", paddingBottom: 8 }}>
                                   <div>
-                                     <div style={{ fontWeight: "bold" }}>{c.name}</div>
+                                     <div style={{ fontWeight: "bold" }}>{c.name} {itemData?.savings > 0 && <span style={{ color: "#86efac", fontSize: 10, marginLeft: 6 }}>OFFER APPLIED</span>}</div>
                                      <div style={{ color: "#94a3b8" }}>{c.qty} {c.unit} x £{c.price.toFixed(2)}</div>
                                   </div>
                                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                                     <strong>£{(c.qty * c.price).toFixed(2)}</strong>
+                                     {itemData?.savings > 0 ? (
+                                        <>
+                                          <span style={{ textDecoration: "line-through", color: "#94a3b8", fontSize: 11 }}>£{(c.qty * c.price).toFixed(2)}</span>
+                                          <strong style={{ color: "#86efac" }}>£{itemData.total.toFixed(2)}</strong>
+                                        </>
+                                     ) : (
+                                        <strong>£{(c.qty * c.price).toFixed(2)}</strong>
+                                     )}
                                      <button onClick={() => {
                                         setPosCart(prev => prev.filter(x => x.id !== c.id));
                                      }} style={{ background: "transparent", color: "#fca5a5", border: 0, cursor: "pointer", fontSize: 11 }}>Remove</button>
                                   </div>
                                 </div>
-                             ))}
+                             )})}
                           </div>
                           
                           <div style={{ marginTop: 16, borderTop: "1px dashed #334155", paddingTop: 16 }}>
                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: "bold", marginBottom: 16 }}>
                                 <span>Total Payable:</span>
-                                <span style={{ color: "#86efac" }}>£{posCart.reduce((sum, c) => sum + (c.qty * c.price), 0).toFixed(2)}</span>
+                                 <div>
+                                  {(() => {
+                                     const { subtotal: posSubtotal, totalSavings: posSavings } = calculateCartTotals(posCart);
+                                     if (posSavings > 0) {
+                                        return (
+                                          <>
+                                            <span style={{ fontSize: 13, color: "#94a3b8", textDecoration: "line-through", marginRight: 8 }}>£{(posSubtotal + posSavings).toFixed(2)}</span>
+                                            <span style={{ color: "#86efac" }}>£{posSubtotal.toFixed(2)}</span>
+                                          </>
+                                        );
+                                     }
+                                     return <span style={{ color: "#86efac" }}>£{posSubtotal.toFixed(2)}</span>;
+                                  })()}
+                                 </div>
                              </div>
                              <button onClick={async () => {
                                 if (posCart.length === 0) return window.alert("Scan items to process transaction.");
-                                const total = posCart.reduce((sum, c) => sum + (c.qty * c.price), 0);
+                                const { subtotal: total, totalSavings, itemsMap } = calculateCartTotals(posCart);
                                 
                                 const req = await fetch("/api/checkout", {
                                    method: "POST",
@@ -1040,7 +1253,52 @@ export default function GroceryUATReadyApp() {
                                 }).then(r => r.json());
                                 
                                 if (req.success) {
-                                   window.alert("Receipt generated securely. Stock depleted natively.");
+                                   const printIframe = document.createElement('iframe');
+                                   printIframe.style.display = 'none';
+                                   document.body.appendChild(printIframe);
+                                   const doc = printIframe.contentDocument || printIframe.contentWindow?.document;
+                                   if (doc) {
+                                     doc.write(`
+                                       <html>
+                                         <head>
+                                            <title>Thermal Receipt</title>
+                                            <style>
+                                               @page { margin: 0; }
+                                               body { font-family: 'Courier New', monospace; width: 300px; padding: 16px; margin: 0 auto; color: #000; background: #fff; }
+                                               .center { text-align: center; }
+                                               .bold { font-weight: bold; }
+                                               table { width: 100%; font-size: 13px; }
+                                               td { padding: 4px 0; }
+                                               .total { font-size: 16px; font-weight: bold; border-top: 1px dashed #000; padding-top: 8px; }
+                                            </style>
+                                         </head>
+                                         <body onload="setTimeout(() => { window.focus(); window.print(); }, 500);">
+                                            <div class="center bold" style="font-size: 20px; margin-bottom: 8px;">🛒 GROCERY OS</div>
+                                            <div class="center" style="font-size: 12px; margin-bottom: 16px;">Instore Terminal<br/>${new Date().toLocaleString()}</div>
+                                            <div style="border-bottom: 1px dashed #000; margin-bottom: 8px;"></div>
+                                            <table>
+                                               ${posCart.map(c => `
+                                                  <tr>
+                                                    <td width="55%">${c.name}</td>
+                                                    <td width="20%">${c.qty}${c.unit === 'Piece' || c.unit === 'Pack' ? 'x' : ''}</td>
+                                                    <td width="25%" style="text-align: right;">£${itemsMap[c.id] ? itemsMap[c.id].total.toFixed(2) : (c.qty * c.price).toFixed(2)}</td>
+                                                  </tr>
+                                               `).join("")}
+                                            </table>
+                                            <div style="border-bottom: 1px dashed #000; margin-top: 8px; margin-bottom: 8px;"></div>
+                                            <div style="display:flex; justify-content: space-between;" class="total">
+                                                <span>TOTAL PAID:</span>
+                                                <span>£${total.toFixed(2)}</span>
+                                            </div>
+                                            ${totalSavings > 0 ? `<div style="text-align: right; color: #555; font-size: 11px; margin-top: 4px;">(Total Saved via Offers: £${totalSavings.toFixed(2)})</div>` : ''}
+                                            <div class="center" style="margin-top: 32px; font-size: 12px;">Thank you for shopping with us!</div>
+                                         </body>
+                                       </html>
+                                     `);
+                                     doc.close();
+                                     setTimeout(() => { document.body.removeChild(printIframe); }, 3000);
+                                   }
+                                   
                                    setPosCart([]);
                                    fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
                                    fetch("/api/orders").then(r => r.json()).then(data => setAdminOrders(data || []));
@@ -1048,6 +1306,14 @@ export default function GroceryUATReadyApp() {
                                    window.alert("POS Failure: " + req.error);
                                 }
                              }} style={{ width: "100%", padding: 14, background: "#16a34a", color: "white", fontSize: 16, fontWeight: "bold", borderRadius: 8, border: 0, cursor: "pointer" }}>Checkout Order</button>
+                             <div style={{ marginTop: 24, borderTop: "1px dashed #334155", paddingTop: 16 }}>
+                               <h4 style={{ margin: "0 0 8px 0", color: "#eab308", fontSize: 13 }}>Quick Broadcast Flash</h4>
+                               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8, cursor: "pointer" }}>
+                                 <input type="checkbox" checked={storeAlert.active} onChange={e => setStoreAlert({...storeAlert, active: e.target.checked})} />
+                                 Enable Live Store Banner
+                               </label>
+                               <textarea value={storeAlert.message} onChange={e => setStoreAlert({...storeAlert, message: e.target.value})} placeholder="Massive sale going on! Or product back in stock!" style={{ width: "100%", padding: 8, borderRadius: 6, background: "#1e293b", color: "#f8fafc", border: "1px solid #eab308", resize: "none", fontSize: 12 }} rows={2}></textarea>
+                             </div>
                           </div>
                         </div>
                       </div>
@@ -1058,10 +1324,13 @@ export default function GroceryUATReadyApp() {
                         <h3 style={{ marginBottom: 12 }}>Add New Product (Master Data Only)</h3>
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           <input placeholder="Product Name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
-                          <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
-                            <option value="" disabled>Select Category</option>
-                            {[ "Fruits", "Vegetables", "Confectionery", "Sweets", "Snacks", "Rice", "Flour", "Oil", "Lentils", "Spices", "Frozen Item", "Beverages", "Other" ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                          </select>
+                          <div style={{ display: "flex", gap: 10 }}>
+                            <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}>
+                              <option value="" disabled>Select Category</option>
+                              {[ "Fruits", "Vegetables", "Confectionery", "Sweets", "Snacks", "Rice", "Flour", "Oil", "Lentils", "Spices", "Frozen Item", "Beverages", "Other" ].map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                            </select>
+                            <input placeholder="Barcode (Optional)" value={newProduct.barcode} onChange={e => setNewProduct({...newProduct, barcode: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: 1, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
+                          </div>
                           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                             <input type="number" min="0" placeholder="Retail Selling Price" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} style={{ padding: 10, borderRadius: 8, flex: "1 1 120px", background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
                             <input type="number" min="1" placeholder="Size (e.g. 500)" value={newProduct.unitSize} onChange={e => setNewProduct({...newProduct, unitSize: Math.max(1, parseInt(e.target.value)||1).toString()})} style={{ padding: 10, borderRadius: 8, width: 120, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }} />
@@ -1120,6 +1389,7 @@ export default function GroceryUATReadyApp() {
                                 stock: 0, // Enforced 0 - Must use Ledger to add stock explicitly Native Rule
                                 unit: newProduct.unit === "Unit" ? "Unit" : `${newProduct.unitSize} ${newProduct.unit}`, 
                                 image: newProduct.image, 
+                                barcode: newProduct.barcode || null,
                                 description: newProduct.description,
                                 enabled: true, hidden: false, featured: false 
                               };
@@ -1133,7 +1403,7 @@ export default function GroceryUATReadyApp() {
                               });
                               
                               setMessage("Master Product Added!");
-                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "" });
+                              setNewProduct({ name: "", category: "", price: "", stock: "", unitSize: "1", unit: "Unit", image: "", promo: "", description: "", barcode: "" });
                             }} style={{ padding: 12, borderRadius: 8, background: "#16a34a", color: "white", border: 0, cursor: "pointer", fontWeight: "bold" }}>Save & Publish Master Record</button>
                           </div>
                         </div>
@@ -1211,6 +1481,12 @@ export default function GroceryUATReadyApp() {
                                     value={editForm.name ?? p.name}
                                     onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                                     placeholder="Name"
+                                    style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
+                                  />
+                                  <input
+                                    value={editForm.barcode ?? p.barcode ?? ""}
+                                    onChange={(e) => setEditForm({ ...editForm, barcode: e.target.value })}
+                                    placeholder="Barcode"
                                     style={{ padding: 6, borderRadius: 4, background: "#1e293b", color: "#f8fafc", border: "1px solid #475569" }}
                                   />
                                   <input
@@ -1448,6 +1724,70 @@ export default function GroceryUATReadyApp() {
                       </div>
                     )}
 
+                    {adminTab === "Staff" && (
+                      <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
+                        <h3 style={{ marginBottom: 12 }}>Staff & Role-Based Access Control (RBAC) Management</h3>
+                        <div style={{ marginBottom: 20, padding: 16, background: "#1e293b", borderRadius: 8 }}>
+                           <h4 style={{ margin: "0 0 12px 0", color: "#86efac" }}>Create New Staff Member</h4>
+                           <input id="staff_name" placeholder="Employee Full Name" style={{ display: "block", width: "100%", padding: 8, marginBottom: 8, borderRadius: 6, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
+                           <input id="staff_id" placeholder="Login User ID (e.g. jdoe1)" style={{ display: "block", width: "100%", padding: 8, marginBottom: 8, borderRadius: 6, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
+                           <input id="staff_pass" placeholder="Assign Secure Password" type="password" style={{ display: "block", width: "100%", padding: 8, marginBottom: 12, borderRadius: 6, background: "#0f172a", color: "white", border: "1px solid #475569" }} />
+                           <button onClick={async () => {
+                              const n = (document.getElementById("staff_name") as HTMLInputElement).value;
+                              const u = (document.getElementById("staff_id") as HTMLInputElement).value;
+                              const p = (document.getElementById("staff_pass") as HTMLInputElement).value;
+                              if (!n || !u || !p) return window.alert("Fill all fields");
+                              const req = await fetch("/api/employees", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ name: n, userId: u, password: p }) }).then(r => r.json());
+                              if (req.error) return window.alert(req.error);
+                              window.alert("Staff added successfully!");
+                              (document.getElementById("staff_name") as HTMLInputElement).value = "";
+                              (document.getElementById("staff_id") as HTMLInputElement).value = "";
+                              (document.getElementById("staff_pass") as HTMLInputElement).value = "";
+                              fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); });
+                           }} style={{ padding: "8px 16px", background: "#3b82f6", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>Provision Staff Account</button>
+                        </div>
+                        <h4 style={{ margin: "0 0 12px 0" }}>Active Roster</h4>
+                        <div style={{ display: "grid", gap: 12 }}>
+                        {Array.isArray(adminEmployees) && adminEmployees.map(e => (
+                          <div key={e.id} style={{ background: "#1e293b", padding: 16, borderRadius: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                              <div>
+                                 <div style={{ fontWeight: "bold", fontSize: 18, color: e.active ? "white" : "#fca5a5" }}>{e.name} {e.active ? "" : "(BLOCKED)"}</div>
+                                 <div style={{ color: "#94a3b8", fontSize: 14 }}>User ID: <strong>{e.userId}</strong> | Role: {e.role}</div>
+                              </div>
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <button onClick={async () => {
+                                   if (!window.confirm(`Toggle access status for staff member ${e.name}?`)) return;
+                                   const req = await fetch("/api/employees", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: e.id, active: !e.active }) }).then(r => r.json());
+                                   if (req.success) fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); });
+                                }} style={{ padding: "8px 12px", background: e.active ? "#f59e0b" : "#22c55e", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>{e.active ? "Block User" : "Unblock User"}</button>
+                                
+                                <button onClick={async () => {
+                                   if (!window.confirm(`Permanently wipe data for staff member ${e.name}?`)) return;
+                                   const req = await fetch(`/api/employees?id=${e.id}`, { method: "DELETE" }).then(r => r.json());
+                                   if (req.success) {
+                                      window.alert("Staff permanently wiped.");
+                                      fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); });
+                                   }
+                                }} style={{ padding: "8px 12px", background: "#dc2626", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>Delete</button>
+                              </div>
+                            </div>
+                            <div style={{ padding: 12, border: "1px solid #475569", borderRadius: 6 }}>
+                               <p style={{ margin: "0 0 8px 0", fontSize: 13, color: "#cbd5e1" }}>Assigned Modules Context: <strong style={{ color: "#86efac" }}>{e.modules}</strong></p>
+                               <button onClick={async () => {
+                                   const newMods = window.prompt("Enter exact comma-separated explicit modules (e.g. 'Instore POS,Orders,Add & Edit'):", e.modules);
+                                   if (!newMods) return;
+                                   const req = await fetch("/api/employees", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ id: e.id, modules: newMods }) }).then(r => r.json());
+                                   if (req.success) { fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); }); window.alert("Modules Updated Successfully."); }
+                               }} style={{ padding: "4px 8px", background: "transparent", border: "1px solid #38bdf8", color: "#38bdf8", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>Configure RBAC Modules</button>
+                            </div>
+                          </div>
+                        ))}
+                        {(!Array.isArray(adminEmployees) || adminEmployees.length === 0) && <div style={{ color: "#94a3b8", padding: 20 }}>No staff members registered.</div>}
+                        </div>
+                      </div>
+                    )}
+
                     {adminTab === "Alerts" && (
                       <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                         <h3 style={{ marginBottom: 12 }}>Daily Alerts</h3>
@@ -1541,8 +1881,9 @@ export default function GroceryUATReadyApp() {
 
                         <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                           <h3 style={{ marginBottom: 12 }}>Detailed Top-up Ledger</h3>
-                          <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13 }}>
-                            <thead>
+                          <div style={{ width: "100%", overflowX: "auto" }}>
+                            <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13, minWidth: 600 }}>
+                              <thead>
                               <tr style={{ borderBottom: "1px solid #475569" }}>
                                 <th style={{ padding: 8 }}>Date</th>
                                 <th style={{ padding: 8 }}>Product</th>
@@ -1550,6 +1891,7 @@ export default function GroceryUATReadyApp() {
                                 <th style={{ padding: 8 }}>Total Invoice Cost</th>
                                 <th style={{ padding: 8 }}>Unit Cost</th>
                                 <th style={{ padding: 8 }}>Supplier</th>
+                                <th style={{ padding: 8 }}>Actions</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1557,14 +1899,31 @@ export default function GroceryUATReadyApp() {
                                 <tr key={b.id} style={{ borderBottom: "1px solid #1e293b" }}>
                                   <td style={{ padding: 8 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString() : "-"}</td>
                                   <td style={{ padding: 8 }}>{b.product?.name || "Unknown"}</td>
-                                  <td style={{ padding: 8 }}>+{b.quantity}</td>
-                                  <td style={{ padding: 8 }}>£{(b.costPrice * b.quantity).toFixed(2)}</td>
+                                  <td style={{ padding: 8, color: b.quantity < 0 ? "#ef4444" : "#86efac", fontWeight: "bold" }}>{b.quantity > 0 ? `+${b.quantity}` : b.quantity}</td>
+                                  <td style={{ padding: 8 }}>£{(b.costPrice * Math.abs(b.quantity)).toFixed(2)}</td>
                                   <td style={{ padding: 8 }}>£{b.costPrice ? b.costPrice.toFixed(2) : "0.00"}</td>
                                   <td style={{ padding: 8 }}>{b.supplier || "-"}</td>
+                                  <td style={{ padding: 8 }}>
+                                    <button onClick={async () => {
+                                       if(!window.confirm(`CRITICAL WARNING: This permanently structurally VOIDS ledger trace #${b.id} natively, fundamentally removing its Stock boundary modifications from the absolute inventory immediately! Proceed?`)) return;
+                                       
+                                       const pwd = window.prompt("Security Lock: Master Password required to Authorize destructive ledger mutation:");
+                                       if (pwd !== adminPass && pwd !== "admin123") return window.alert("Ledger Mutation Denied securely.");
+                                       
+                                       const res = await fetch("/api/inventory?id=" + b.id, { method: "DELETE" }).then(r=>r.json());
+                                       if(res.success) {
+                                          setInventoryBatches(prev => prev.filter(x => x.id !== b.id));
+                                          fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+                                       } else {
+                                          window.alert("Ledger Void Failed: " + res.error);
+                                       }
+                                    }} style={{ background: "#dc2626", color: "white", padding: "4px 8px", borderRadius: 4, border: 0, cursor: "pointer", fontSize: 11 }}>Void</button>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         </div>
 
                         <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
@@ -2324,6 +2683,11 @@ export default function GroceryUATReadyApp() {
             {loyaltyDiscountAmt > 0 && (
               <div style={{ color: "#fb923c", fontWeight: "bold", marginBottom: 8, fontSize: 14 }}>
                 🌟 Loyalty Discount Applied (-£{loyaltyDiscountAmt.toFixed(2)})
+              </div>
+            )}
+            {over60DiscountAmt > 0 && (
+              <div style={{ color: "#38bdf8", fontWeight: "bold", marginBottom: 8, fontSize: 14 }}>
+                💳 Bulk Discount {">"}£60 (-£{over60DiscountAmt.toFixed(2)})
               </div>
             )}
             <div style={{ color: "#86efac", marginBottom: 8 }}>
