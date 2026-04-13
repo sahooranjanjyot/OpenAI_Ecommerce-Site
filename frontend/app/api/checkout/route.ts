@@ -3,7 +3,18 @@ import { prisma } from "../../../lib/prisma";
 
 export async function POST(req: Request) {
   try {
-    const { buyer, cart, deliveryAddress, deliveryComment, subtotal } = await req.json();
+    const { buyer, cart, deliveryAddress, deliveryComment, subtotal, idempotencyKey } = await req.json();
+
+    // Idempotency Protection to prevent duplicate deductions on queue replays
+    const serverGlobal = globalThis as any;
+    if (!serverGlobal.idemMap) serverGlobal.idemMap = new Set<string>();
+    if (idempotencyKey) {
+        if (serverGlobal.idemMap.has(idempotencyKey)) {
+            console.log("Idempotency key matched. Bypassing duplicate checkout safely.");
+            return NextResponse.json({ success: true, message: "Idempotent Replay Bypassed Safely" });
+        }
+        serverGlobal.idemMap.add(idempotencyKey);
+    }
 
     // Find or create customer
     let customer = await prisma.customer.findUnique({
