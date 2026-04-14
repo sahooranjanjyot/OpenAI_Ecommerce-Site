@@ -25,8 +25,8 @@ export async function POST(req: Request) {
       const newOrderCount = customer.orders + 1;
       let updatedNotes = customer.notes || "";
       
-      // Autonomous Loyalty Trigger (5 Orders Threshold)
-      if (newOrderCount >= 5 && !updatedNotes.includes("LOYALTY")) {
+      // Autonomous Loyalty Trigger (5 Orders Threshold) - Never trigger for anonymous Instore Walk-ins
+      if (newOrderCount >= 5 && !updatedNotes.includes("LOYALTY") && buyer.mobile !== "POS") {
          updatedNotes = (updatedNotes + " LOYALTY").trim();
       }
 
@@ -60,7 +60,8 @@ export async function POST(req: Request) {
         items: orderItems,
         address: deliveryAddress,
         status: "new",
-      }
+      },
+      include: { customer: true }
     });
 
     // CRITICAL SECURITY & LOGISTICS LAYER: Server-Side Interactive Stock Depletion

@@ -175,7 +175,7 @@ export default function GroceryUATReadyApp() {
   const [lastSyncAttempt, setLastSyncAttempt] = useState<string>("");
   const [posCheckoutModal, setPosCheckoutModal] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ method: "Cash", received: "", splitCash: "", splitCard: "" });
-
+  const [posManualLoyalty, setPosManualLoyalty] = useState(false);
   const [agentAuditState, setAgentAuditState] = useState<any>(null);
 
   const runAgentAudit = (productId: string) => {
@@ -619,7 +619,7 @@ export default function GroceryUATReadyApp() {
     }
 
     const activeCustomerRecord = adminCustomers.find(cu => cu.phone === buyer?.mobile);
-    const isLoyaltyCustomer = activeCustomerRecord?.notes?.includes("LOYALTY") || buyer?.notes?.includes("LOYALTY");
+    const isLoyaltyCustomer = activeCustomerRecord?.notes?.includes("LOYALTY") || buyer?.notes?.includes("LOYALTY") || posManualLoyalty;
 
     let loyaltyDiscountAmt = 0;
     if (isLoyaltyCustomer && _subtotal > 0) {
@@ -823,34 +823,41 @@ export default function GroceryUATReadyApp() {
 
           <Btn active={route === "sale"} label="Offers" onClick={() => { setSelectedCategory("All"); setRoute("sale"); setMessage(""); }} />
 
-          {!adminLogged && (
+          {route !== "admin" && (
             <Btn
               active={route === "buyer"}
               label={buyer ? `My Account (${buyer.name})` : "Sign In / Register"}
               onClick={() => { setRoute("buyer"); setMessage(""); }}
             />
           )}
-          {((buyer && route !== "admin") || adminLogged || employeeLogged) && (
+          {buyer && route !== "admin" && (
             <button
               onClick={() => {
-                if (window.confirm("Are you sure you want to securely log out of your active Grocery OS profile?")) {
-                  if (route === "admin") {
-                    setAdminLogged(false);
-                    setEmployeeLogged(false);
-                    setMessage("Seller identity disconnected securely.");
-                  } else {
-                    setBuyer(null);
-                    localStorage.removeItem("groceryos_buyer");
-                    setMessage("Buyer profile signed out universally.");
-                  }
+                if (window.confirm("Are you sure you want to securely log out of your Buyer profile?")) {
+                  setBuyer(null);
+                  localStorage.removeItem("groceryos_buyer");
+                  setMessage("Buyer profile signed out.");
                 }
               }}
-              style={{
-                width: "100%", textAlign: "left", padding: 12, borderRadius: 10,
-                background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d", cursor: "pointer", marginTop: 8
-              }}
+              style={{ width: "100%", textAlign: "left", padding: 12, borderRadius: 10, background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d", cursor: "pointer", marginTop: 8 }}
             >
-              Log Out {route === "admin" ? (adminLogged ? "(Admin)" : "(Employee)") : "(Buyer)"}
+              Log Out (Buyer)
+            </button>
+          )}
+
+          {(adminLogged || employeeLogged) && route === "admin" && (
+            <button
+              onClick={() => {
+                if (window.confirm("Are you sure you want to securely log out of your active Seller profile?")) {
+                  setAdminLogged(false);
+                  setEmployeeLogged(false);
+                  setRoute("store");
+                  setMessage("Seller identity disconnected securely.");
+                }
+              }}
+              style={{ width: "100%", textAlign: "left", padding: 12, borderRadius: 10, background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d", cursor: "pointer", marginTop: 8 }}
+            >
+              Log Out {(adminLogged && "(Admin)") || (employeeLogged && "(Employee)")}
             </button>
           )}
 
@@ -1405,6 +1412,23 @@ export default function GroceryUATReadyApp() {
                                   })()}
                                 </div>
                               </div>
+                              {!posManualLoyalty && posCart.length > 0 && (
+                                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                                  <button onClick={() => {
+                                    const pwd = window.prompt("Security Lock: Master Password required to apply discretionary VIP Loyalty to this walk-in.");
+                                    if (pwd === adminPass || pwd === "admin123") {
+                                      setPosManualLoyalty(true);
+                                    } else {
+                                      window.alert("Discretionary Override Denied.");
+                                    }
+                                  }} style={{ padding: "6px 12px", background: "transparent", color: "#fbbf24", border: "1px solid #b45309", borderRadius: 16, cursor: "pointer", fontSize: 11, fontWeight: "bold" }}>
+                                    + Manual VIP Loyalty
+                                  </button>
+                                </div>
+                              )}
+                              {posManualLoyalty && posCart.length > 0 && (
+                                <div style={{ textAlign: "right", marginBottom: 12, fontSize: 12, color: "#fbbf24", fontWeight: "bold" }}>✨ Manual VIP Loyalty Discount Applied</div>
+                              )}
                               <button onClick={() => {
                                 if (posCart.length === 0) return window.alert("Scan items to process transaction.");
                                 setPosCheckoutModal(true);
@@ -1431,7 +1455,7 @@ export default function GroceryUATReadyApp() {
                             </div>
 
                             {(() => {
-                              const { subtotal: total, totalSavings, itemsMap } = calculateCartTotals(posCart);
+                              const { subtotal: total, totalSavings, itemsMap, globalDiscount, loyaltyDiscountAmt } = calculateCartTotals(posCart);
                               const parsedReceived = parseFloat(paymentForm.received) || 0;
                               const changeDue = Math.max(0, parsedReceived - total);
 
@@ -1561,8 +1585,15 @@ export default function GroceryUATReadyApp() {
                                             }
                                           });
 
+                                          if (globalDiscount > 0) {
+                                            cartHTML += "<tr><td style='text-align: left;' colspan='2'>STORE WIDE CART PROMO</td><td style='text-align: right;'>-£" + globalDiscount.toFixed(2) + "</td></tr>";
+                                          }
+                                          if (loyaltyDiscountAmt > 0) {
+                                            cartHTML += "<tr><td style='text-align: left;' colspan='2'>VIP LOYALTY DISCOUNT</td><td style='text-align: right;'>-£" + loyaltyDiscountAmt.toFixed(2) + "</td></tr>";
+                                          }
+
                                           if (totalSavings > 0) {
-                                            cartHTML += "<tr><td style='text-align: left;' colspan='2'><b>TOTAL SAVINGS</b></td><td style='text-align: right;'><b>-£" + totalSavings.toFixed(2) + "</b></td></tr>";
+                                            cartHTML += "<tr><td style='text-align: left; padding-top: 6px;' colspan='2'><b>TOTAL SAVINGS</b></td><td style='text-align: right; padding-top: 6px;'><b>-£" + totalSavings.toFixed(2) + "</b></td></tr>";
                                           }
 
                                           const dDate = new Date();
@@ -1666,6 +1697,7 @@ export default function GroceryUATReadyApp() {
                                         if (req.success) {
                                           printReceipt();
                                           setPosCart([]);
+                                          setPosManualLoyalty(false);
                                           setPosCheckoutModal(false);
                                           setPaymentForm({ method: "Cash", received: "", splitCash: "", splitCard: "" });
                                           fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
@@ -1679,6 +1711,7 @@ export default function GroceryUATReadyApp() {
                                         setSyncStatus("Queued locally due to network.");
                                         printReceipt();
                                         setPosCart([]);
+                                        setPosManualLoyalty(false);
                                         setPosCheckoutModal(false);
                                         setPaymentForm({ method: "Cash", received: "", splitCash: "", splitCard: "" });
                                       }
@@ -2051,12 +2084,33 @@ export default function GroceryUATReadyApp() {
                                     <ul style={{ margin: 0, paddingLeft: 20 }}>
                                       {parsedItems.map((item: any, idx: number) => {
                                         const returnedAmt = adminReturns.filter((r: any) => r.orderId === o.id && r.productName === item.name).reduce((sum: number, r: any) => sum + r.quantity, 0);
+                                        let itemSavings = 0;
+                                        if (item.promo === "BOGO" || item.promo?.includes("BOGO")) {
+                                          itemSavings += Math.floor(item.qty / 2) * item.price;
+                                        } else if (item.promo === "Discount 50%") {
+                                          itemSavings += (item.price * 0.5) * item.qty;
+                                        } else if (item.promo?.startsWith("Buy ")) {
+                                          const match = item.promo.match(/Buy (\d+) Pay (\d+)/);
+                                          if (match) itemSavings += Math.floor(item.qty / parseInt(match[1])) * (parseInt(match[1]) - parseInt(match[2])) * item.price;
+                                        } else if (item.promo?.match(/(\d+) for £([\d.]+)/i)) {
+                                          const match = item.promo.match(/(\d+) for £([\d.]+)/i);
+                                          if (match) {
+                                            const reqQty = parseInt(match[1]), bundlePrice = parseFloat(match[2]);
+                                            const bundles = Math.floor(item.qty / reqQty), remainder = item.qty % reqQty;
+                                            const standardTotal = item.qty * item.price;
+                                            const targetTotal = (bundles * bundlePrice) + (remainder * item.price);
+                                            if (standardTotal > targetTotal) itemSavings += (standardTotal - targetTotal);
+                                          }
+                                        }
+                                        if (item.wasPrice && item.wasPrice > item.price) itemSavings += item.qty * (item.wasPrice - item.price);
+
                                         return (
-                                          <li key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                                            <span>
+                                          <li key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                                            <div style={{ flex: 1, minWidth: "200px" }}>
                                               <span style={{ textDecoration: returnedAmt >= item.qty ? "line-through" : "none" }}>{item.qty}x {item.name} (£{(item.price * item.qty).toFixed(2)})</span>
                                               {returnedAmt > 0 && <span style={{ color: "#f87171", fontSize: 12, marginLeft: 8 }}>[Returned {returnedAmt}/{item.qty}]</span>}
-                                            </span>
+                                              {itemSavings > 0 && <div style={{ color: "#4ade80", fontSize: 13, marginTop: 2 }}>↳ Item Savings: -£{itemSavings.toFixed(2)} {item.promo && `(${item.promo})`}</div>}
+                                            </div>
                                             {returnedAmt < item.qty && (
                                               <button onClick={() => setReturnForm({ active: true, targetOrder: o, targetItem: item, qty: 1, reason: "Defective / Damaged", condition: "Damaged / Unsellable", refund: item.price, restock: false })} style={{ padding: "4px 8px", background: "#334155", color: "white", border: "1px solid #475569", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>Process Return</button>
                                             )}
@@ -2065,6 +2119,47 @@ export default function GroceryUATReadyApp() {
                                       })}
                                       {parsedItems.length === 0 && <li>No items parsed</li>}
                                     </ul>
+
+                                    {/* Receipt Pricing Calculation Match */}
+                                    {(() => {
+                                      const baseTotal = parsedItems.reduce((acc: number, c: any) => acc + (c.price * c.qty), 0);
+                                      const mappedItemSavings = parsedItems.reduce((acc: number, item: any) => {
+                                        let s = 0;
+                                        if (item.promo === "BOGO" || item.promo?.includes("BOGO")) s += Math.floor(item.qty / 2) * item.price;
+                                        else if (item.promo === "Discount 50%") s += (item.price * 0.5) * item.qty;
+                                        else if (item.promo?.startsWith("Buy ")) {
+                                          const m = item.promo.match(/Buy (\d+) Pay (\d+)/);
+                                          if (m) s += Math.floor(item.qty / parseInt(m[1])) * (parseInt(m[1]) - parseInt(m[2])) * item.price;
+                                        } else if (item.promo?.match(/(\d+) for £([\d.]+)/i)) {
+                                          const m = item.promo.match(/(\d+) for £([\d.]+)/i);
+                                          if (m) {
+                                            const rQty = parseInt(m[1]), bP = parseFloat(m[2]);
+                                            const bundles = Math.floor(item.qty / rQty), remainder = item.qty % rQty;
+                                            const std = item.qty * item.price, tgt = (bundles * bP) + (remainder * item.price);
+                                            if (std > tgt) s += (std - tgt);
+                                          }
+                                        }
+                                        if (item.wasPrice && item.wasPrice > item.price) s += item.qty * (item.wasPrice - item.price);
+                                        return acc + s;
+                                      }, 0);
+                                      
+                                      const totalSavings = baseTotal - o.total;
+                                      const globalSavings = totalSavings - mappedItemSavings;
+
+                                      if (totalSavings > 0.01) {
+                                        return (
+                                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #334155", width: "100%", maxWidth: 350 }}>
+                                            <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8" }}><span>Base Subtotal:</span><span>£{baseTotal.toFixed(2)}</span></div>
+                                            {globalSavings > 0.01 && (
+                                              <div style={{ display: "flex", justifyContent: "space-between", color: "#4ade80" }}><span>Global / Cart Savings:</span><span>-£{globalSavings.toFixed(2)}</span></div>
+                                            )}
+                                            <div style={{ display: "flex", justifyContent: "space-between", color: "#4ade80", fontWeight: "bold" }}><span>Total Combined Savings:</span><span>-£{totalSavings.toFixed(2)}</span></div>
+                                            <div style={{ display: "flex", justifyContent: "space-between", color: "#f8fafc", fontWeight: "bold", marginTop: 4 }}><span>Final Charged Total:</span><span>£{o.total.toFixed(2)}</span></div>
+                                          </div>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
                                   </div>
                                 </div>
                               )
@@ -2660,8 +2755,12 @@ export default function GroceryUATReadyApp() {
               <input
                 autoComplete="none" spellCheck="false" autoCorrect="off" name="mock-checkout-phone-input"
                 value={checkoutPhone}
-                onChange={(e) => setCheckoutPhone(e.target.value)}
-                placeholder="Phone number for delivery updates"
+                maxLength={12}
+                onChange={(e) => {
+                  const sanitized = e.target.value.replace(/\D/g, '').slice(0, 12);
+                  setCheckoutPhone(sanitized);
+                }}
+                placeholder="Phone number for delivery updates (Max 12 digits)"
                 style={{
                   width: "100%", padding: 10, borderRadius: 8, marginBottom: 10,
                   background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
@@ -2686,8 +2785,9 @@ export default function GroceryUATReadyApp() {
 
               <textarea
                 value={deliveryAddress}
-                onChange={(e) => setDeliveryAddress(e.target.value)}
-                placeholder="Delivery address (Include Postcode)"
+                maxLength={100}
+                onChange={(e) => setDeliveryAddress(e.target.value.slice(0, 100))}
+                placeholder="Delivery address (Include Postcode, Max 100 chars)"
                 style={{
                   width: "100%", minHeight: 100, padding: 10, borderRadius: 8, marginBottom: 10,
                   background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
@@ -2696,8 +2796,9 @@ export default function GroceryUATReadyApp() {
 
               <textarea
                 value={deliveryComment}
-                onChange={(e) => setDeliveryComment(e.target.value)}
-                placeholder="Additional delivery instructions / comments"
+                maxLength={100}
+                onChange={(e) => setDeliveryComment(e.target.value.slice(0, 100))}
+                placeholder="Additional delivery instructions / comments (Max 100 chars)"
                 style={{
                   width: "100%", minHeight: 80, padding: 10, borderRadius: 8, marginBottom: 10,
                   background: "#1e293b", color: "#f8fafc", border: "1px solid #475569"
@@ -2838,24 +2939,109 @@ export default function GroceryUATReadyApp() {
                     </div>
                   </div>
                   <h3>Your Recent Orders</h3>
-                  {orderHistory[buyer.mobile] && orderHistory[buyer.mobile].length > 0 ? (
-                    <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-                      {[...orderHistory[buyer.mobile]].reverse().map((o, i) => (
-                        <div key={i} style={{ background: "#0f172a", padding: 18, borderRadius: 10, border: "1px solid #334155", position: "relative" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "flex-start" }}>
-                            <div>
-                              <strong style={{ color: "#38bdf8", fontSize: 16, display: "block" }}>Secure Order Delivered</strong>
-                              <span style={{ fontSize: 12, color: "#64748b" }}>{o.date ? new Date(o.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : "Recently Completed"}</span>
-                            </div>
+                  {(() => {
+                    const myOrders = adminOrders.filter(o => o.customer?.phone === buyer.mobile).sort((a, b) => b.id - a.id);
+                    return myOrders.length > 0 ? (
+                      <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
+                        {myOrders.map((o) => (
+                          <div key={o.id} style={{ background: "#0f172a", padding: 18, borderRadius: 10, border: "1px solid #334155", position: "relative" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "flex-start" }}>
+                              <div>
+                                <strong style={{ color: "#38bdf8", fontSize: 16, display: "block" }}>
+                                  Order #{o.id} <span style={{ fontSize: 13, color: "#64748b", fontWeight: "normal", marginLeft: 8 }}>Secure Order Delivered</span>
+                                </strong>
+                                <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                                  {o.createdAt ? new Date(o.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : "Recently Completed"}
+                                </span>
+                              </div>
                             <span style={{ color: "#86efac", fontWeight: "bold", fontSize: 18 }}>£{o.total.toFixed(2)}</span>
                           </div>
                           <div style={{ color: "#cbd5e1", fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
                             {(() => {
-                              try {
-                                const parsed = JSON.parse(o.items as string);
-                                if (Array.isArray(parsed)) return parsed.map((item: any) => `${item.name} x${item.qty}`).join(", ");
-                              } catch (e) { }
-                              return o.items;
+                              let parsedItems: any[] = [];
+                              try { parsedItems = JSON.parse(o.items as string); } catch (e) { }
+
+                              if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
+                                return <div>{o.items}</div>;
+                              }
+
+                              return (
+                                <div>
+                                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                                    {parsedItems.map((item: any, idx: number) => {
+                                      let itemSavings = 0;
+                                      if (item.promo === "BOGO" || item.promo?.includes("BOGO")) {
+                                        itemSavings += Math.floor(item.qty / 2) * item.price;
+                                      } else if (item.promo === "Discount 50%") {
+                                        itemSavings += (item.price * 0.5) * item.qty;
+                                      } else if (item.promo?.startsWith("Buy ")) {
+                                        const match = item.promo.match(/Buy (\d+) Pay (\d+)/);
+                                        if (match) itemSavings += Math.floor(item.qty / parseInt(match[1])) * (parseInt(match[1]) - parseInt(match[2])) * item.price;
+                                      } else if (item.promo?.match(/(\d+) for £([\d.]+)/i)) {
+                                        const match = item.promo.match(/(\d+) for £([\d.]+)/i);
+                                        if (match) {
+                                          const reqQty = parseInt(match[1]), bundlePrice = parseFloat(match[2]);
+                                          const bundles = Math.floor(item.qty / reqQty), remainder = item.qty % reqQty;
+                                          const standardTotal = item.qty * item.price;
+                                          const targetTotal = (bundles * bundlePrice) + (remainder * item.price);
+                                          if (standardTotal > targetTotal) itemSavings += (standardTotal - targetTotal);
+                                        }
+                                      }
+                                      if (item.wasPrice && item.wasPrice > item.price) itemSavings += item.qty * (item.wasPrice - item.price);
+
+                                      return (
+                                        <li key={idx} style={{ marginBottom: 6 }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                            <span>{item.qty}x {item.name}</span>
+                                            <span>£{(item.price * item.qty).toFixed(2)}</span>
+                                          </div>
+                                          {itemSavings > 0 && <div style={{ color: "#4ade80", fontSize: 13, marginTop: 2 }}>↳ Item Savings: -£{itemSavings.toFixed(2)} {item.promo && `(${item.promo})`}</div>}
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+
+                                  {/* Receipt Pricing Calculation Match */}
+                                  {(() => {
+                                    const baseTotal = parsedItems.reduce((acc: number, c: any) => acc + (c.price * c.qty), 0);
+                                    const mappedItemSavings = parsedItems.reduce((acc: number, item: any) => {
+                                      let s = 0;
+                                      if (item.promo === "BOGO" || item.promo?.includes("BOGO")) s += Math.floor(item.qty / 2) * item.price;
+                                      else if (item.promo === "Discount 50%") s += (item.price * 0.5) * item.qty;
+                                      else if (item.promo?.startsWith("Buy ")) {
+                                        const m = item.promo.match(/Buy (\d+) Pay (\d+)/);
+                                        if (m) s += Math.floor(item.qty / parseInt(m[1])) * (parseInt(m[1]) - parseInt(m[2])) * item.price;
+                                      } else if (item.promo?.match(/(\d+) for £([\d.]+)/i)) {
+                                        const m = item.promo.match(/(\d+) for £([\d.]+)/i);
+                                        if (m) {
+                                          const rQty = parseInt(m[1]), bP = parseFloat(m[2]);
+                                          const bundles = Math.floor(item.qty / rQty), remainder = item.qty % rQty;
+                                          const std = item.qty * item.price, tgt = (bundles * bP) + (remainder * item.price);
+                                          if (std > tgt) s += (std - tgt);
+                                        }
+                                      }
+                                      if (item.wasPrice && item.wasPrice > item.price) s += item.qty * (item.wasPrice - item.price);
+                                      return acc + s;
+                                    }, 0);
+                                    
+                                    const totalSavings = baseTotal - o.total;
+                                    const globalSavings = totalSavings - mappedItemSavings;
+
+                                    if (totalSavings > 0.01) {
+                                      return (
+                                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #334155", width: "100%", maxWidth: 350 }}>
+                                          <div style={{ display: "flex", justifyContent: "space-between", color: "#94a3b8" }}><span>Base Subtotal:</span><span>£{baseTotal.toFixed(2)}</span></div>
+                                          {globalSavings > 0.01 && (
+                                            <div style={{ display: "flex", justifyContent: "space-between", color: "#4ade80" }}><span>Global / Cart Savings:</span><span>-£{globalSavings.toFixed(2)}</span></div>
+                                          )}
+                                          <div style={{ display: "flex", justifyContent: "space-between", color: "#4ade80", fontWeight: "bold" }}><span>Total Combined Savings:</span><span>-£{totalSavings.toFixed(2)}</span></div>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+                                </div>
+                              );
                             })()}
                           </div>
                           <div style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>Delivered to: {o.address}</div>
@@ -2903,7 +3089,8 @@ export default function GroceryUATReadyApp() {
                     <div style={{ padding: 20, border: "1px dashed #334155", borderRadius: 10, marginTop: 16, color: "#64748b", textAlign: "center" }}>
                       No orders found.
                     </div>
-                  )}
+                  );
+                  })()}
                 </>
               ) : (
                 <>
