@@ -42,6 +42,28 @@ export async function POST(req: Request) {
     
     if (!pId) throw new Error("Product identity strictly unresolvable.");
 
+    // Expected / Received Mismatch logic
+    let deliveryStatus = "no_expectation";
+    let alert = false;
+    let mismatch: number | null = null;
+    
+    if (body.expectedQty !== undefined && body.expectedQty !== null) {
+      const eQ = parseFloat(body.expectedQty);
+      const rQ = parseFloat(body.quantity);
+      mismatch = eQ - rQ;
+      
+      if (mismatch === 0) {
+        deliveryStatus = "exact";
+        alert = false;
+      } else if (mismatch > 0) {
+        deliveryStatus = "short";
+        alert = true;
+      } else {
+        deliveryStatus = "excess";
+        alert = true;
+      }
+    }
+
     const batch = await prisma.inventoryBatch.create({
       data: {
         productId: pId,
@@ -49,7 +71,11 @@ export async function POST(req: Request) {
         remaining: parseFloat(body.quantity),
         costPrice: parseFloat(body.costPrice),
         supplier: body.supplier || "",
-        channel: "admin"
+        channel: "admin",
+        expectedQty: body.expectedQty !== undefined ? parseFloat(body.expectedQty) : null,
+        mismatch,
+        deliveryStatus,
+        alert
       } as any,
       include: { product: true }
     });

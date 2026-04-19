@@ -26,6 +26,7 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   batches     InventoryBatch[]
+  PurchaseOrder PurchaseOrder[]
 }
 
 model Customer {
@@ -78,6 +79,10 @@ model InventoryBatch {
   costPrice   Float    @default(0.0)
   supplier    String?
   channel     String   @default("admin")
+  expectedQty Float?
+  mismatch    Float?
+  deliveryStatus String @default("no_expectation")
+  alert       Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -106,4 +111,18 @@ model Employee {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PurchaseOrder {
+  id           Int      @id @default(autoincrement())
+  productId    Int
+  product      Product  @relation(fields: [productId], references: [id])
+  productName  String
+  orderedQty   Float
+  supplier     String
+  unitCost     Float    @default(0.0)
+  status       String   @default("pending_delivery")
+  expectedDate DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
