@@ -110,6 +110,10 @@ export default function GroceryUATReadyApp() {
   const [editForm, setEditForm] = useState<any>({});
   const [catalogSearch, setCatalogSearch] = useState("");
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [fixingStockProduct, setFixingStockProduct] = useState<any>(null);
+  const [stockFixQty, setStockFixQty] = useState("");
+  const [stockFixReason, setStockFixReason] = useState("Adjustment");
+  const [lockedCashModalOpen, setLockedCashModalOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [globalPromo, setGlobalPromo] = useState({ active: false, type: "percent", value: 10, threshold: 50 });
   const [storeAlert, setStoreAlert] = useState({ active: false, message: "Welcome to Grocery OS! Fresh deals daily." });
@@ -172,6 +176,7 @@ export default function GroceryUATReadyApp() {
   const [posSearch, setPosSearch] = useState("");
   const [posCart, setPosCart] = useState<any[]>([]);
   const [expandAlerts, setExpandAlerts] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [quickPoState, setQuickPoState] = useState<{[key:string]: string}>({});
 
   const posReorderAlerts = useMemo(() => {
@@ -224,6 +229,34 @@ export default function GroceryUATReadyApp() {
   const [paymentForm, setPaymentForm] = useState({ method: "Cash", received: "", splitCash: "", splitCard: "" });
   const [posManualLoyalty, setPosManualLoyalty] = useState(false);
   const [agentAuditState, setAgentAuditState] = useState<any>(null);
+
+  // Global Unified Weighted Average Cost Hook
+  const getActiveInventoryValue = (pId: string | number) => {
+     const zeroResp = { avg: 0, totalVal: 0, totalQty: 0, invalid: false, reason: "" };
+     const product = adminProducts.find((p: any) => String(p.id) === String(pId));
+     if (!product) return zeroResp;
+     if (product.stock < 0) return { avg: 0, totalVal: 0, totalQty: 0, invalid: true, reason: "Data Error: Negative Stock" }; // Block negative stock natively avoiding WAC overrides
+     
+     const sellingPrice = product.price;
+     const batches = inventoryBatches.filter((b: any) => String(b.productId) === String(pId) && b.costPrice > 0);
+     let totalVal = 0;
+     let totalQty = 0;
+     batches.forEach((b: any) => {
+        const remainingQty = parseFloat(b.remaining || "0");
+        const isCorrupted = sellingPrice > 0 && b.costPrice > sellingPrice * 2;
+        if (remainingQty > 0 && !isCorrupted) {
+           totalVal += (remainingQty * b.costPrice);
+           totalQty += remainingQty;
+        }
+     });
+     return {
+         avg: totalQty > 0 ? (totalVal / totalQty) : 0,
+         totalVal,
+         totalQty,
+         invalid: false,
+         reason: ""
+     };
+  };
 
   const runAgentAudit = (productId: string) => {
     const p = adminProducts.find(x => String(x.id) === String(productId));
@@ -2461,6 +2494,14 @@ export default function GroceryUATReadyApp() {
                                 const parsedQty = parseInt(newBatch.quantity);
                                 if (parsedQty <= 0) return window.alert("System Security: Ledger purely handles Absolute Values. Negative quantities are strictly forbidden. Please use 'Outward / Movement' dropdown logic to apply subtractions naturally.");
 
+                                if (["stock top-up", "customer return"].includes(newBatch.category)) {
+                                  const prod = adminProducts.find((p: any) => String(p.id) === String(newBatch.productId));
+                                  const unitC = (parseFloat(newBatch.costPrice) / parsedQty) || 0;
+                                  if (prod && prod.price > 0 && unitC > prod.price * 2) {
+                                    if (!window.confirm(`Abnormal cost entry detected! Unit cost (£${unitC.toFixed(2)}) is > 2x the selling price (£${prod.price.toFixed(2)}). Do you want to forcefully proceed?`)) return;
+                                  }
+                                }
+
                                 if (newBatch.category === "stock top-up" || newBatch.category === "customer return") {
                                   if (!newBatch.costPrice || newBatch.costPrice.toString().trim() === "" || parseFloat(newBatch.costPrice) < 0) return window.alert("System Security: Financial Cost/Refund fields are mandatory and must be a positive integer.");
                                   if (!newBatch.supplier || newBatch.supplier.toString().trim() === "") return window.alert("System Security: Supplier/Processor tracing names are strictly mandatory for compliance tracing.");
@@ -2644,22 +2685,28 @@ export default function GroceryUATReadyApp() {
                         const now = new Date();
                         const serverTodayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
                         const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).getTime();
+                        const lastMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).getTime();
 
-                        let todaySales = 0;
-                        let weeklySales = 0;
+                        let todaySales = 0; let weeklySales = 0; let monthlySales = 0;
+                        let todayCogs = 0; let weeklyCogs = 0; let monthlyCogs = 0;
                         let todayOrdersCount = 0;
                         let totalSales = 0;
                         let orderCount = adminOrders.length;
                         let allSoldItems: Record<string, number> = {};
                         let todaySoldItems: Record<string, number> = {};
+                        let weeklySoldItems: Record<string, number> = {};
+                        let monthlySoldItems: Record<string, number> = {};
                         let categorySales: Record<string, number> = {};
                         let promoSales = 0;
+                        let missingDataWarnings = false;
 
                         const buyersMap: Record<string, number> = {};
 
                         adminOrders.forEach(o => {
                           const refundsForOrder = adminReturns.filter((r: any) => r.orderId === o.id).reduce((sum: number, r: any) => sum + r.refundAmount, 0);
                           const netTotal = Math.max(0, o.total - refundsForOrder);
+                          const refundRatio = o.total > 0 ? (refundsForOrder / o.total) : 0;
+                          const effectiveRatio = Math.max(0, 1 - refundRatio);
 
                           totalSales += netTotal;
 
@@ -2680,11 +2727,47 @@ export default function GroceryUATReadyApp() {
                               const items = JSON.parse(o.items || "[]");
                               items.forEach((item: any) => {
                                 todaySoldItems[item.id] = (todaySoldItems[item.id] || 0) + item.qty;
+                                const unitObj = getActiveInventoryValue(item.id);
+                                const q = item.qty * effectiveRatio;
+                                if (unitObj.invalid) {
+                                   missingDataWarnings = true;
+                                } else {
+                                   todayCogs += (q * unitObj.avg);
+                                }
                               });
                             } catch (e) { }
                           }
                           if (odTime >= lastWeek) {
                             weeklySales += netTotal;
+                            try {
+                              const items = JSON.parse(o.items || "[]");
+                              items.forEach((item: any) => {
+                                weeklySoldItems[item.id] = (weeklySoldItems[item.id] || 0) + item.qty;
+                                const unitObj = getActiveInventoryValue(item.id);
+                                const q = item.qty * effectiveRatio;
+                                if (unitObj.invalid) {
+                                   missingDataWarnings = true;
+                                } else {
+                                   weeklyCogs += (q * unitObj.avg);
+                                }
+                              });
+                            } catch (e) { }
+                          }
+                          if (odTime >= lastMonth) {
+                            monthlySales += netTotal;
+                            try {
+                              const items = JSON.parse(o.items || "[]");
+                              items.forEach((item: any) => {
+                                monthlySoldItems[item.id] = (monthlySoldItems[item.id] || 0) + item.qty;
+                                const unitObj = getActiveInventoryValue(item.id);
+                                const q = item.qty * effectiveRatio;
+                                if (unitObj.invalid) {
+                                   missingDataWarnings = true;
+                                } else {
+                                   monthlyCogs += (q * unitObj.avg);
+                                }
+                              });
+                            } catch (e) { }
                           }
 
                           if (o.buyerId) {
@@ -2727,30 +2810,187 @@ export default function GroceryUATReadyApp() {
 
                         let dailyProfitLeak = 0;
                         const affectedLeakProducts: any[] = [];
+                        const criticalActions: any[] = [];
+                        let totalCashLocked = 0;
+                        const lockedProducts: any[] = [];
                         
                         adminProducts.forEach(p => {
                           const unitsSoldToday = todaySoldItems[p.id] || 0;
-                          if (unitsSoldToday > 0) {
-                            const unitSellingPrice = p.price;
-                            const activeBatches = inventoryBatches
-                                .filter(b => b.productId === p.id && b.costPrice > 0)
-                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // Sort explicitly newest first!
-                            
-                            let unitCost = activeBatches.length > 0 ? activeBatches[0].costPrice : 0; // Strictly extract Actual Last Bought COGS
-                            
-                            const profitPerUnit = unitSellingPrice - unitCost;
-                            if (profitPerUnit < 0) {
-                               const lossPerUnit = Math.abs(profitPerUnit);
-                               const totalLoss = lossPerUnit * unitsSoldToday;
-                               dailyProfitLeak += totalLoss;
-                               affectedLeakProducts.push({ productName: p.name, loss: totalLoss, profitPerUnit, unitCost });
+                          const unitSellingPrice = p.price;
+                          let unitObj = getActiveInventoryValue(p.id); // Evaluate dynamically through Weighted Average Engine completely natively matching standard
+                          let unitCost = unitObj.avg;
+                          
+                          const profitPerUnit = unitSellingPrice - unitCost;
+                          if (unitsSoldToday > 0 && profitPerUnit < 0) {
+                             const lossPerUnit = Math.abs(profitPerUnit);
+                             const totalLoss = lossPerUnit * unitsSoldToday;
+                             dailyProfitLeak += totalLoss;
+                             affectedLeakProducts.push({ productName: p.name, loss: totalLoss, profitPerUnit, unitCost });
+                          }
+
+                          // Critical Actions Check
+                          if (p.stock < 0) {
+                            criticalActions.push({ productId: p.id, productName: p.name, issue: "Data mismatch", action: "Fix Stock", priority: 1, currentStock: p.stock });
+                          } else {
+                            const reorderData = posReorderAlerts.find(a => String(a.productId) === String(p.id));
+                            if (reorderData && reorderData.daysLeft < 1 && p.stock >= 0) {
+                              criticalActions.push({ productId: p.id, productName: p.name, issue: "Runs out today", action: "Order", priority: 2, suggestedQty: reorderData.reorderQty, leadTimeDays: 2 });
                             }
                           }
+                          if (profitPerUnit < 0) {
+                            criticalActions.push({ productId: p.id, productName: p.name, issue: "Sold at loss", action: "Increase Price", priority: 3, currentPrice: p.price });
+                          }
+
+                          // Cash Locked in Inventory Algorithm
+                          const currentStock = unitObj.invalid ? 0 : unitObj.totalQty;
+                          const avgDailySales = (weeklySoldItems[p.id] || 0) / 7;
+                          const daysOfStock = avgDailySales > 0 ? (currentStock / avgDailySales) : Infinity;
+
+                          if (currentStock > 0 && daysOfStock > 7) {
+                            const inventoryValue = unitObj.invalid ? 0 : unitObj.totalVal;
+                            totalCashLocked += inventoryValue;
+                            lockedProducts.push({ productName: p.name, inventoryValue, daysOfStock });
+                          }
                         });
+
+                        const topCriticalActions = criticalActions.sort((a, b) => a.priority - b.priority).slice(0, 5);
+                        
+                        if (Math.abs(lockedProducts.reduce((acc, obj) => acc + obj.inventoryValue, 0) - totalCashLocked) > 0.01) {
+                           console.error("Cash Locked mismatch: Modal bounds decoupled from structural aggregation!");
+                        }
+                        
+                        if (todayCogs > todaySales * 2) console.warn("COGS anomaly: Today COGS exceeds 2x Sales");
+                        if (weeklyCogs > weeklySales * 2) console.warn("COGS anomaly: Weekly COGS exceeds 2x Sales");
+                        if (monthlyCogs > monthlySales * 2) console.warn("COGS anomaly: Monthly COGS exceeds 2x Sales");
+                        
+                        const profitToday = todaySales - todayCogs;
+                        const profitWeek = weeklySales - weeklyCogs;
+                        const profitMonth = monthlySales - monthlyCogs;
+                        const netPosition = profitToday - dailyProfitLeak;
 
                         return (
                           <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                             <h3 style={{ marginBottom: 16 }}>Analytics Dashboard</h3>
+                            
+                            {/* CEO Profit Intelligence Panel */}
+                            <div style={{ background: "#0f172a", borderRadius: 12, border: "1px solid #475569", marginBottom: 24, padding: 16 }}>
+                               <div style={{ fontSize: 13, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12, fontWeight: "bold" }}>Profit Intelligence</div>
+                               {missingDataWarnings && (
+                                 <div style={{ padding: "8px 12px", background: "#450a0a", border: "1px solid #b91c1c", color: "#fca5a5", fontSize: 13, borderRadius: 6, marginBottom: 16 }}>
+                                   ⚠️ <b>Warning</b>: Profit may be overstated due to data error (Negative Stock items detected and excluded from COGS natively).
+                                 </div>
+                               )}
+                               
+                               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
+                                  <div style={{ background: "#1e293b", padding: 12, borderRadius: 8 }}>
+                                     <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 4 }}>Today's Margin</div>
+                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, fontSize: 12 }}>
+                                        <span style={{ color: "white" }}>Sales: £{todaySales.toFixed(2)}</span>
+                                        <span style={{ color: "#94a3b8" }}>COGS: £{todayCogs.toFixed(2)}</span>
+                                     </div>
+                                     {todayOrdersCount === 0 || todaySales === 0 ? (
+                                        <div style={{ fontSize: 15, fontWeight: "bold", color: "#94a3b8" }}>No sales yet today</div>
+                                     ) : (
+                                        <div style={{ fontSize: 18, fontWeight: "bold", color: profitToday >= 0 ? "#4ade80" : "#f87171" }}>
+                                           {profitToday >= 0 ? "+" : "-"}£{Math.abs(profitToday).toFixed(2)} Profit
+                                        </div>
+                                     )}
+                                  </div>
+                                  <div style={{ background: "#1e293b", padding: 12, borderRadius: 8 }}>
+                                     <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 4 }}>Weekly Margin</div>
+                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, fontSize: 12 }}>
+                                        <span style={{ color: "white" }}>Sales: £{weeklySales.toFixed(2)}</span>
+                                        <span style={{ color: "#94a3b8" }}>COGS: £{weeklyCogs.toFixed(2)}</span>
+                                     </div>
+                                     <div style={{ fontSize: 18, fontWeight: "bold", color: profitWeek >= 0 ? "#4ade80" : "#f87171" }}>
+                                        {profitWeek >= 0 ? "+" : "-"}£{Math.abs(profitWeek).toFixed(2)} Profit
+                                     </div>
+                                     <div style={{ fontSize: 11, color: profitWeek >= 0 ? "#4ade80" : "#f87171", marginTop: 2, fontWeight: "bold" }}>{profitWeek >= 0 ? "Profitable week" : "Losing this week"}</div>
+                                  </div>
+                                  <div style={{ background: "#1e293b", padding: 12, borderRadius: 8 }}>
+                                     <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 4 }}>Monthly Margin</div>
+                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, fontSize: 12 }}>
+                                        <span style={{ color: "white" }}>Sales: £{monthlySales.toFixed(2)}</span>
+                                        <span style={{ color: "#94a3b8" }}>COGS: £{monthlyCogs.toFixed(2)}</span>
+                                     </div>
+                                     <div style={{ fontSize: 18, fontWeight: "bold", color: profitMonth >= 0 ? "#4ade80" : "#f87171" }}>
+                                        {profitMonth >= 0 ? "+" : "-"}£{Math.abs(profitMonth).toFixed(2)} Profit
+                                     </div>
+                                     <div style={{ fontSize: 11, color: profitMonth >= 0 ? "#4ade80" : "#f87171", marginTop: 2, fontWeight: "bold" }}>{profitMonth >= 0 ? "Healthy month" : "Struggling month"}</div>
+                                  </div>
+                               </div>
+
+                               <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16 }}>
+                                  <div style={{ background: netPosition > 0 ? "#064e3b" : netPosition < 0 ? "#7f1d1d" : "#1e293b", border: `1px solid ${netPosition > 0 ? "#059669" : netPosition < 0 ? "#ef4444" : "#475569"}`, padding: 16, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <div>
+                                          <div style={{ fontSize: 13, color: netPosition > 0 ? "#6ee7b7" : netPosition < 0 ? "#fca5a5" : "#94a3b8", marginBottom: 4, fontWeight: "bold" }}>NET POSITION (Profit - Leak)</div>
+                                          <div style={{ fontSize: 24, fontWeight: "bold", color: "white" }}>{netPosition > 0 ? "+" : netPosition < 0 ? "-" : ""}£{Math.abs(netPosition).toFixed(2)}</div>
+                                      </div>
+                                      <div style={{ background: "rgba(0,0,0,0.3)", padding: "6px 12px", borderRadius: 6, fontSize: 14, fontWeight: "bold", color: "white" }}>
+                                          {netPosition > 0 ? "Healthy day" : netPosition < 0 ? "Losing money today" : "Breakeven"}
+                                      </div>
+                                  </div>
+                                  
+                                  <div style={{ background: "#1e293b", padding: 16, borderRadius: 8, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                                      <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 6, fontWeight: "bold" }}>CAPITAL EFFICIENCY</div>
+                                      <div style={{ fontSize: 14, color: "white" }}>
+                                          £<strong style={{ color: "#facc15" }}>{totalCashLocked.toFixed(2)}</strong> capital tied → generating only <strong style={{ color: "#4ade80" }}>£{weeklySales.toFixed(2)}/week</strong>
+                                      </div>
+                                  </div>
+                               </div>
+                            </div>
+
+                            {topCriticalActions.length > 0 && (
+                              <div style={{ marginBottom: 24, padding: 16, background: "#1e1b4b", borderRadius: 10, border: "1px solid #4338ca" }}>
+                                <div style={{ fontSize: 16, fontWeight: "bold", color: "#818cf8", marginBottom: 12 }}>⚠️ Immediate Actions Required</div>
+                                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                                  {topCriticalActions.map((ca, idx) => (
+                                    <li key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: idx === topCriticalActions.length - 1 ? 0 : "1px solid #312e81" }}>
+                                      <div style={{ fontSize: 14 }}>
+                                        <span style={{ fontWeight: "bold", color: "white" }}>• {ca.productName}</span>
+                                        <span style={{ color: "#94a3b8", fontWeight: "normal", marginLeft: 8 }}>→ {ca.issue}</span>
+                                      </div>
+                                      <button onClick={async () => {
+                                        if (ca.action === "Order") {
+                                          setQuickPoState(p => ({ ...p, [ca.productId]: "loading" }));
+                                          try {
+                                            const res = await fetch("/api/purchase-orders", { method: "POST", body: JSON.stringify({ productId: ca.productId, productName: ca.productName, suggestedQty: ca.suggestedQty || 20, leadTimeDays: ca.leadTimeDays || 2 }) });
+                                            if (res.ok) {
+                                              setQuickPoState(p => ({ ...p, [ca.productId]: "done" }));
+                                              window.alert(`Ordered ${ca.suggestedQty || 20} units of ${ca.productName} successfully!`);
+                                            } else throw new Error();
+                                          } catch {
+                                            setQuickPoState(p => ({ ...p, [ca.productId]: "error" }));
+                                            window.alert("Failed to order.");
+                                          }
+                                        } else if (ca.action === "Fix Stock") {
+                                           const p = adminProducts.find((x: any) => x.id === ca.productId);
+                                           if (p) {
+                                              setStockFixQty("");
+                                              setStockFixReason("Adjustment");
+                                              setFixingStockProduct(p);
+                                           }
+                                        } else if (ca.action === "Increase Price") {
+                                          const p = adminProducts.find((x: any) => x.id === ca.productId);
+                                          if (!p) return;
+                                          const newPrice = window.prompt(`Instantly update retail price for ${p.name} (Current: £${p.price.toFixed(2)}):`);
+                                          if (newPrice && parseFloat(newPrice) > 0) {
+                                            await fetch(`/api/products?id=${ca.productId}`, {
+                                              method: "PUT",
+                                              body: JSON.stringify({ price: parseFloat(newPrice) })
+                                            });
+                                            window.alert("Price natively upgraded!");
+                                            fetch("/api/products").then(r => r.json()).then(setAdminProducts);
+                                          }
+                                        }
+                                      }} style={{ padding: "4px 10px", borderRadius: 6, background: quickPoState[ca.productId] === "done" ? "#10b981" : "transparent", color: quickPoState[ca.productId] === "done" ? "white" : "#818cf8", border: quickPoState[ca.productId] === "done" ? "0" : "1px solid #4338ca", cursor: "pointer", fontSize: 12, fontWeight: "bold" }}>
+                                        {quickPoState[ca.productId] === "loading" ? "⏳" : quickPoState[ca.productId] === "done" ? "Done ✓" : `[${ca.action}]`}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
 
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
                               {dailyProfitLeak > 0 && (
@@ -2762,6 +3002,17 @@ export default function GroceryUATReadyApp() {
                                   <button onClick={() => window.alert("Leak Breakdown:\n\n" + affectedLeakProducts.map(x => `${x.productName} (Cost: £${x.unitCost.toFixed(2)} -> Selling: £${(x.unitCost + x.profitPerUnit).toFixed(2)})\nTotal Daily Loss: -£${x.loss.toFixed(2)}`).join("\n\n"))} style={{ padding: "8px 16px", borderRadius: 6, background: "#ef4444", color: "white", border: 0, fontWeight: "bold", cursor: "pointer" }}>Investigate</button>
                                 </div>
                               )}
+
+                                <div style={{ padding: 16, background: "#422006", borderRadius: 10, border: "1px solid #a16207", gridColumn: dailyProfitLeak > 0 ? "" : "1 / -1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <div>
+                                    <div style={{ fontSize: 13, color: "#fde047", marginBottom: 4, fontWeight: "bold" }}>💰 Cash Locked</div>
+                                    <div style={{ fontSize: 26, fontWeight: "bold", color: "#facc15" }}>£{totalCashLocked.toFixed(2)}</div>
+                                  </div>
+                                  <button onClick={() => {
+                                      if (lockedProducts.length === 0) return window.alert("Zero Locked Capital detected across current inventory vectors.");
+                                      setLockedCashModalOpen(true);
+                                  }} style={{ padding: "8px 16px", borderRadius: 6, background: "#eab308", color: "black", border: 0, fontWeight: "bold", cursor: "pointer" }}>Reduce Stock</button>
+                                </div>
                               
                               <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
                                 <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Today&apos;s Sales</div>
@@ -2798,8 +3049,57 @@ export default function GroceryUATReadyApp() {
                                 <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Stock Running Low</h4>
                                 {lowStock.length ? lowStock.map((name, i) => <span key={i} style={{ display: "inline-block", background: "#7f1d1d", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, marginRight: 6, marginBottom: 6, fontSize: 12 }}>{name}</span>) : <span style={{ color: "#86efac" }}>Inventory Healthy</span>}
                               </div>
-
                             </div>
+                            
+                            <div style={{ padding: 16, background: "#1e1b4b", borderRadius: 10, border: "1px solid #4338ca", marginTop: 16 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                                   <h4 style={{ margin: 0, color: "#818cf8" }}>Data Integrity & Margin Debug Panel</h4>
+                                   <button onClick={() => setDebugOpen(!debugOpen)} style={{ padding: "4px 8px", fontSize: 11, background: "transparent", border: "1px solid #6366f1", color: "#a5b4fc", borderRadius: 4, cursor: "pointer" }}>{debugOpen ? "Hide Debug Payload" : "Show System Logic"}</button>
+                                </div>
+                                
+                                {debugOpen && (
+                                  <div style={{ overflowX: "auto" }}>
+                                    <table style={{ width: "100%", textAlign: "left", fontSize: 13, borderCollapse: "collapse", minWidth: 600 }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: "1px solid #312e81", color: "#94a3b8" }}>
+                                          <th style={{ padding: 8 }}>Product</th>
+                                          <th style={{ padding: 8 }}>Selling Price</th>
+                                          <th style={{ padding: 8 }}>Avg Unit Cost</th>
+                                          <th style={{ padding: 8 }}>Linked Ledger Volume</th>
+                                          <th style={{ padding: 8 }}>Computed Margin (%)</th>
+                                          <th style={{ padding: 8 }}>Status Rule</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                         {adminProducts.map(p => {
+                                            const wacData = getActiveInventoryValue(p.id);
+                                            const wac = wacData.avg;
+                                            const marginVal = wacData.invalid ? 0 : (p.price - wac);
+                                            const marginPct = (p.price > 0 && !wacData.invalid) ? ((marginVal / p.price) * 100) : 0;
+                                            const isLoss = wac > p.price && p.price > 0 && !wacData.invalid;
+                                            const abnormalCost = wac > p.price * 2 && p.price > 0 && !wacData.invalid;
+                                            return (
+                                                <tr key={p.id} style={{ borderBottom: "1px solid #312e81", opacity: wacData.invalid ? 0.6 : 1 }}>
+                                                    <td style={{ padding: 8, color: "white" }}>{p.name} {wacData.invalid && <span style={{ color: "#f87171", marginLeft: 8 }}>(Blocked: Neg Stock)</span>}</td>
+                                                    <td style={{ padding: 8, color: "#86efac" }}>£{p.price.toFixed(2)}</td>
+                                                    <td style={{ padding: 8, color: "#fca5a5" }}>{wacData.invalid ? "N/A" : `£${wac.toFixed(2)}`}</td>
+                                                    <td style={{ padding: 8, color: "#93c5fd" }}>{wacData.invalid ? "Excluded" : `${wacData.totalQty} qty (£${wacData.totalVal.toFixed(2)} Value)`}</td>
+                                                    <td style={{ padding: 8, color: wacData.invalid ? "#64748b" : (marginPct >= 0 ? "#4ade80" : "#f87171"), fontWeight: "bold" }}>{wacData.invalid ? "N/A" : `${marginPct.toFixed(1)}%`}</td>
+                                                    <td style={{ padding: 8, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                                        {wacData.invalid ? <span style={{ background: "#450a0a", border: "1px solid #b91c1c", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, fontWeight: "bold", fontSize: 11 }}>{wacData.reason} - Action Required</span> : null}
+                                                        {isLoss && !abnormalCost && !wacData.invalid ? <span style={{ background: "#7f1d1d", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, fontWeight: "bold", fontSize: 11 }}>Selling at loss</span> : null}
+                                                        {abnormalCost && !wacData.invalid ? <span style={{ background: "#450a0a", border: "1px solid #b91c1c", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, fontWeight: "bold", fontSize: 11 }}>Abnormal cost entry</span> : null}
+                                                        {!isLoss && !abnormalCost && !wacData.invalid ? <span style={{ color: "#94a3b8", fontSize: 11 }}>HEALTHY</span> : null}
+                                                    </td>
+                                                </tr>
+                                            )
+                                         })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                            </div>
+
                           </div>
                         )
                       })()}
@@ -3526,6 +3826,127 @@ export default function GroceryUATReadyApp() {
                 <button onClick={() => { window.alert("Agent Engine: Error vector saved. Adjusting future baseline coefficients."); setAgentAuditState(null); }} style={{ flex: 1, padding: "8px", background: "transparent", border: "1px solid #94a3b8", color: "#94a3b8", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>No, Revert Baseline</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {fixingStockProduct && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 10000, backdropFilter: "blur(2px)" }}>
+          <div style={{ background: "#0f172a", width: 400, borderRadius: 12, border: "1px solid #334155", color: "white", padding: 24, boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)" }}>
+            <h2 style={{ margin: "0 0 16px 0", fontSize: 18 }}>Fix Stock - {fixingStockProduct.name}</h2>
+            
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>Current Stock (read-only)</label>
+              <input type="text" readOnly value={fixingStockProduct.stock} style={{ width: "100%", padding: 10, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#94a3b8" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>Correct Stock</label>
+              <input type="number" value={stockFixQty} onChange={e => setStockFixQty(e.target.value)} style={{ width: "100%", padding: 10, background: "#1e293b", border: "1px solid #3b82f6", borderRadius: 6, color: "white" }} placeholder="Enter true stock..." />
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>Reason</label>
+              <select value={stockFixReason} onChange={e => setStockFixReason(e.target.value)} style={{ width: "100%", padding: 10, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "white" }}>
+                <option value="Adjustment">Adjustment</option>
+                <option value="Damage">Damage</option>
+                <option value="Entry Error">Entry Error</option>
+                <option value="Theft">Theft</option>
+              </select>
+            </div>
+
+            <div style={{ display: "flex", gap: 12 }}>
+              <button disabled={!stockFixQty || parseInt(stockFixQty) < 0} onClick={async () => {
+                 const correctStock = parseInt(stockFixQty);
+                 if (isNaN(correctStock) || correctStock < 0) return;
+                 const adjustment = correctStock - fixingStockProduct.stock;
+                 
+                 await fetch("/api/inventory", {
+                   method: "POST",
+                   body: JSON.stringify({ 
+                       productId: fixingStockProduct.id, 
+                       quantity: Math.abs(adjustment), 
+                       costPrice: 0, 
+                       category: adjustment > 0 ? "stock top-up" : "stock adjustment", 
+                       supplier: stockFixReason 
+                   })
+                 });
+                 fetch("/api/products").then(r => r.json()).then(setAdminProducts);
+                 setFixingStockProduct(null);
+              }} style={{ flex: 1, padding: 10, background: (!stockFixQty || parseInt(stockFixQty) < 0) ? "#334155" : "#3b82f6", color: "white", border: 0, borderRadius: 6, cursor: (!stockFixQty || parseInt(stockFixQty) < 0) ? "not-allowed" : "pointer", fontWeight: "bold" }}>Save</button>
+              
+              <button onClick={() => setFixingStockProduct(null)} style={{ flex: 1, padding: 10, background: "transparent", color: "#94a3b8", border: "1px solid #334155", borderRadius: 6, cursor: "pointer", fontWeight: "bold" }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lockedCashModalOpen && adminTab === "Analytics" && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 10000, backdropFilter: "blur(2px)" }}>
+          <div style={{ background: "#0f172a", width: 650, borderRadius: 12, border: "1px solid #a16207", color: "white", padding: 24, boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #334155", paddingBottom: 16, marginBottom: 20 }}>
+              <h2 style={{ margin: 0, color: "#fde047" }}>💰 Locked Capital Reduction</h2>
+              <button onClick={() => setLockedCashModalOpen(false)} style={{ background: "transparent", color: "#94a3b8", border: 0, cursor: "pointer", fontSize: 24 }}>&times;</button>
+            </div>
+
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {(() => {
+                 // We re-compute exactly as bounded in Analytics natively here so we have access to the UI engine!
+                 const stagnantBatches: any[] = [];
+                 const now = new Date();
+                 const serverTodayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                 const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).getTime();
+                 const localWeeklySold: Record<string, number> = {};
+                 adminOrders.forEach(o => {
+                    const odTime = new Date(o.createdAt || o.date || new Date().toISOString()).getTime();
+                    if (odTime >= lastWeek) {
+                         try {
+                              const items = JSON.parse(o.items || "[]");
+                              items.forEach((i: any) => localWeeklySold[i.id] = (localWeeklySold[i.id] || 0) + i.qty);
+                         } catch(e){}
+                    }
+                 });
+
+                 adminProducts.forEach(p => {
+                    const localUnitObj = getActiveInventoryValue(p.id);
+                    const modalCurrentStock = localUnitObj.invalid ? 0 : localUnitObj.totalQty;
+                    const avgDailySales = (localWeeklySold[p.id] || 0) / 7;
+                    const days = avgDailySales > 0 ? (modalCurrentStock / avgDailySales) : Infinity;
+
+                    if (modalCurrentStock > 0 && days > 7) {
+                         stagnantBatches.push({ p, value: localUnitObj.invalid ? 0 : localUnitObj.totalVal, days });
+                    }
+                 });
+
+                 return stagnantBatches.sort((a,b)=>b.value - a.value).slice(0, 10).map((item, idx) => (
+                    <li key={item.p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 12, borderBottom: idx === 9 ? 0 : "1px solid #334155" }}>
+                       <div>
+                         <div style={{ fontWeight: "bold", fontSize: 16 }}>{item.p.name}</div>
+                         <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 4 }}>Locked Value: <span style={{ color: "#facc15", fontWeight: "bold" }}>£{item.value.toFixed(2)}</span> &nbsp;|&nbsp; Days left: {item.days === Infinity ? "Infinity" : item.days.toFixed(1)}</div>
+                       </div>
+                       <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={async () => {
+                             const newPrice = window.prompt(`Instantly cut shelf price for ${item.p.name} (Current: £${item.p.price.toFixed(2)}) to stimulate sales:`);
+                             if (newPrice && parseFloat(newPrice) > 0) {
+                                await fetch(`/api/products?id=${item.p.id}`, { method: "PUT", body: JSON.stringify({ price: parseFloat(newPrice) }) });
+                                window.alert("Price slashed!");
+                                fetch("/api/products").then(r => r.json()).then(setAdminProducts);
+                             }
+                          }} style={{ padding: "6px 12px", background: "transparent", color: "#38bdf8", border: "1px solid #0ea5e9", borderRadius: 6, fontWeight: "bold", cursor: "pointer", fontSize: 12 }}>Reduce Price</button>
+                          
+                          <button onClick={async () => {
+                             const promoStr = window.prompt(`Create Offer string for ${item.p.name} (e.g. 'BOGO' or '15% OFF'):`);
+                             if (promoStr) {
+                                await fetch(`/api/products?id=${item.p.id}`, { method: "PUT", body: JSON.stringify({ promo: promoStr }) });
+                                window.alert("Offer applied successfully!");
+                                fetch("/api/products").then(r => r.json()).then(setAdminProducts);
+                             }
+                          }} style={{ padding: "6px 12px", background: "#3b82f6", color: "white", border: 0, borderRadius: 6, fontWeight: "bold", cursor: "pointer", fontSize: 12 }}>Create Offer</button>
+                       </div>
+                    </li>
+                 ));
+              })()}
+            </ul>
           </div>
         </div>
       )}
