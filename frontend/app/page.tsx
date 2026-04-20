@@ -120,12 +120,18 @@ export default function GroceryUATReadyApp() {
   const [loyaltyDiscountSetting, setLoyaltyDiscountSetting] = useState(10);
 
   useEffect(() => {
-    const saved = localStorage.getItem("groceryGlobalPromo");
-    if (saved) setGlobalPromo(JSON.parse(saved));
-    const savedAlert = localStorage.getItem("groceryStoreAlert");
-    if (savedAlert) setStoreAlert(JSON.parse(savedAlert));
-    const savedLoyalty = localStorage.getItem("groceryLoyaltyDiscount");
-    if (savedLoyalty) setLoyaltyDiscountSetting(parseFloat(savedLoyalty) || 10);
+    try {
+      const saved = localStorage.getItem("groceryGlobalPromo");
+      if (saved) setGlobalPromo(JSON.parse(saved));
+    } catch(e) {}
+    try {
+      const savedAlert = localStorage.getItem("groceryStoreAlert");
+      if (savedAlert) setStoreAlert(JSON.parse(savedAlert));
+    } catch(e) {}
+    try {
+      const savedLoyalty = localStorage.getItem("groceryLoyaltyDiscount");
+      if (savedLoyalty) setLoyaltyDiscountSetting(parseFloat(savedLoyalty) || 10);
+    } catch(e) {}
   }, []);
 
   useEffect(() => {
@@ -1449,6 +1455,7 @@ export default function GroceryUATReadyApp() {
                                     <div style={{ fontWeight: "bold", fontSize: 13 }}>{p.name}</div>
                                     {p.promo && <span style={{ background: "#dc2626", color: "white", padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: "bold", marginLeft: 4, whiteSpace: "nowrap" }}>{p.promo}</span>}
                                   </div>
+                                  {p.image && <img src={p.image} alt={p.name} style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 6, marginBottom: 6, opacity: p.stock <= 0 ? 0.3 : 1 }} />}
                                   {p.barcode && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>|||| {p.barcode}</div>}
                                   <div style={{ color: "#38bdf8", fontSize: 12, marginBottom: 8 }}>£{p.price.toFixed(2)} / {p.unit}</div>
                                   <div style={{ color: p.stock <= 0 ? "#ef4444" : p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>Stock: {p.stock} {p.unit}</div>
