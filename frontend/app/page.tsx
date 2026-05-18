@@ -1397,11 +1397,17 @@ export default function GroceryUATReadyApp() {
                                         <div style={{ display: "flex", gap: 16 }}>
                                            <div style={{ flex: 1 }}>
                                              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Cash Portion (£)</label>
-                                             <input type="number" value={paymentForm.splitCash} onChange={e => setPaymentForm({ ...paymentForm, splitCash: e.target.value })} style={{ width: "100%", padding: 12, background: "#1e293b", color: "white", border: "1px solid #475569", borderRadius: 8, fontSize: 16 }} />
+                                             <input type="number" value={paymentForm.splitCash} onChange={e => {
+                                                const cash = parseFloat(e.target.value) || 0;
+                                                setPaymentForm({ ...paymentForm, splitCash: e.target.value, splitCard: Math.max(0, total - cash).toFixed(2) });
+                                              }} style={{ width: "100%", padding: 12, background: "#1e293b", color: "white", border: "1px solid #475569", borderRadius: 8, fontSize: 16 }} />
                                            </div>
                                            <div style={{ flex: 1 }}>
                                              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Card Portion (£)</label>
-                                             <input type="number" value={paymentForm.splitCard} onChange={e => setPaymentForm({ ...paymentForm, splitCard: e.target.value })} style={{ width: "100%", padding: 12, background: "#1e293b", color: "white", border: "1px solid #475569", borderRadius: 8, fontSize: 16 }} />
+                                             <input type="number" value={paymentForm.splitCard} onChange={e => {
+                                                const card = parseFloat(e.target.value) || 0;
+                                                setPaymentForm({ ...paymentForm, splitCard: e.target.value, splitCash: Math.max(0, total - card).toFixed(2) });
+                                              }} style={{ width: "100%", padding: 12, background: "#1e293b", color: "white", border: "1px solid #475569", borderRadius: 8, fontSize: 16 }} />
                                            </div>
                                         </div>
                                       )}
