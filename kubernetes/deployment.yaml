@@ -1,0 +1,133 @@
+# ── GroceryOS Kubernetes Deployment — Production Hardened ──────────────────────
+# FIXED LOW: NetworkPolicy, PodSecurityContext, resource limits, non-root UID
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: groceryos-api
+  namespace: groceryos
+  labels:
+    app: groceryos
+    component: api
+    version: "1.0.0"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: groceryos
+      component: api
+  template:
+    metadata:
+      labels:
+        app: groceryos
+        component: api
+    spec:
+      # FIXED LOW: Run as non-root user (principle of least privilege)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # FIXED LOW: No service account token auto-mount
+      automountServiceAccountToken: false
+
+      containers:
+        - name: groceryos-api
+          image: groceryos/api:1.0.0
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+
+          # FIXED LOW: Container-level security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop:
+                - ALL
+
+          # FIXED LOW: Resource limits — prevents DoS from resource starvation
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # FIXED LOW: Env vars from Kubernetes Secrets (not plaintext)
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: REDIS_TLS
+              value: "true"
+          envFrom:
+            - secretRef:
+                name: groceryos-secrets
+
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 2
+
+          # FIXED LOW: Writable temp dir only (read-only root filesystem)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nextjs-cache
+              mountPath: /app/.next/cache
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nextjs-cache
+          emptyDir: {}
+
+      # FIXED LOW: Pod disruption for rolling updates
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: groceryos
+
+---
+# FIXED LOW: Kubernetes Secrets (values should be injected by CI/CD — not stored in git)
+# Usage: kubectl create secret generic groceryos-secrets --from-env-file=.env.production
+apiVersion: v1
+kind: Secret
+metadata:
+  name: groceryos-secrets
+  namespace: groceryos
+type: Opaque
+# data: # base64-encoded values injected by CI/CD pipeline
+# Example (DO NOT commit real values):
+# stringData:
+#   DATABASE_URL: "postgresql://user:pass@host:5432/groceryos?sslmode=require"
+#   JWT_SECRET: "<256-bit-random>"
+#   CSRF_SECRET: "<256-bit-random>"
+#   ADMIN_PASS_HASH: "<bcrypt-hash>"
+#   REDIS_URL: "rediss://host:6380"
+#   REDIS_PASSWORD: "<password>"
+#   STRIPE_SECRET_KEY: "sk_live_..."
+#   RESEND_API_KEY: "re_..."

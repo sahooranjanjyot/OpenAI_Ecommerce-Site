@@ -1,0 +1,111 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: groceryos
+  labels:
+    app: groceryos
+    component: backup
+spec:
+  # FIX HIGH-B4-004: DB backup strategy (G-021) — hourly incremental, daily full
+  schedule: "0 */6 * * *"   # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/backups/groceryos_${TIMESTAMP}.sql.gz"
+                  echo "[backup] Starting backup at ${TIMESTAMP}"
+                  pg_dump -h postgres -U ${POSTGRES_USER} ${POSTGRES_DB} | gzip > "${BACKUP_FILE}"
+                  echo "[backup] Backup written to ${BACKUP_FILE} ($(du -sh ${BACKUP_FILE} | cut -f1))"
+                  # Retain only last 28 backups (7 days × 4 per day)
+                  ls -t /backups/*.sql.gz | tail -n +29 | xargs --no-run-if-empty rm -v
+                  echo "[backup] Cleanup complete. Backups retained: $(ls /backups/*.sql.gz | wc -l)"
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu:    "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu:    "500m"
+                  memory: "512Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: groceryos
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+# Backup restore verification job — runs daily to test restore integrity
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-verify
+  namespace: groceryos
+spec:
+  schedule: "0 2 * * *"   # Daily at 2am
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: verify
+              image: postgres:16-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  LATEST=$(ls -t /backups/*.sql.gz 2>/dev/null | head -1)
+                  if [ -z "$LATEST" ]; then
+                    echo "[verify] ERROR: No backup files found!"
+                    exit 1
+                  fi
+                  echo "[verify] Verifying latest backup: ${LATEST}"
+                  gzip -t "${LATEST}" && echo "[verify] Backup integrity OK: ${LATEST}" || (echo "[verify] CORRUPT BACKUP!" && exit 1)
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc

@@ -1,0 +1,77 @@
+{
+  "manifest_version": "1.0",
+  "type": "Custom",
+  "version": "1.0",
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "grocery o s",
+      "intents": [
+        {
+          "name": "OrderProductIntent",
+          "slots": [
+            { "name": "ProductName", "type": "AMAZON.Food" },
+            { "name": "Quantity",    "type": "AMAZON.NUMBER" }
+          ],
+          "samples": [
+            "order {Quantity} {ProductName}",
+            "add {Quantity} {ProductName} to my cart",
+            "buy {Quantity} {ProductName}",
+            "I need {Quantity} {ProductName}"
+          ]
+        },
+        {
+          "name": "TrackOrderIntent",
+          "slots": [
+            { "name": "OrderId", "type": "AMAZON.NUMBER" }
+          ],
+          "samples": [
+            "track my order",
+            "where is my order {OrderId}",
+            "what is the status of order {OrderId}",
+            "track order {OrderId}"
+          ]
+        },
+        {
+          "name": "CheckLoyaltyIntent",
+          "slots": [],
+          "samples": [
+            "how many loyalty points do I have",
+            "what are my points",
+            "check my rewards",
+            "loyalty balance"
+          ]
+        },
+        {
+          "name": "ReorderIntent",
+          "slots": [],
+          "samples": [
+            "reorder my last order",
+            "repeat my previous order",
+            "buy the same as last time"
+          ]
+        },
+        {
+          "name": "SearchProductIntent",
+          "slots": [
+            { "name": "Query", "type": "AMAZON.SearchQuery" }
+          ],
+          "samples": [
+            "find {Query}",
+            "search for {Query}",
+            "do you have {Query}",
+            "is {Query} available"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",   "slots": [], "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent", "slots": [], "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",   "slots": [], "samples": []
+        }
+      ]
+    }
+  }
+}

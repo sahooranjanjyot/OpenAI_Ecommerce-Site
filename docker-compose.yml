@@ -1,0 +1,59 @@
+# ── GroceryOS Local Development Stack ────────────────────────────────────────
+# Industry standard: Docker Compose with official PostgreSQL + Redis images
+# Usage:
+#   docker compose up -d          # start all services in background
+#   docker compose down           # stop all services
+#   docker compose logs -f        # tail logs
+#   docker compose ps             # check status
+
+services:
+
+  # ── PostgreSQL 16 (Official image — same version used in production) ────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: groceryos_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     groceryos
+      POSTGRES_PASSWORD: groceryos_dev
+      POSTGRES_DB:       groceryos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # persistent data survives restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groceryos -d groceryos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 (Official image — used for rate limiting, sessions, cache) ──────
+  redis:
+    image: redis:7-alpine
+    container_name: groceryos_redis
+    restart: unless-stopped
+    command: redis-server --requirepass groceryos_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "groceryos_redis_dev", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Adminer — lightweight DB GUI (http://localhost:8080) ───────────────────
+  adminer:
+    image: adminer:latest
+    container_name: groceryos_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

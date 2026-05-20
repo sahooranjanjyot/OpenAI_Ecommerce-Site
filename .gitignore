@@ -1,0 +1,45 @@
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+*.env
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Python virtualenv
+backend/venv/
+**/__pycache__/
+*.pyc
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+
+# Logs
+*.log
+npm-debug.log*
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+
+# Test coverage
+coverage/
+
+# Review output (large generated files)
+review_output/
+.github/

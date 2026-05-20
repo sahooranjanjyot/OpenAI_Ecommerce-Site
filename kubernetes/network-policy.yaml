@@ -1,0 +1,129 @@
+# ── GroceryOS Kubernetes NetworkPolicy ─────────────────────────────────────────
+# FIXED LOW: NetworkPolicy enforces strict ingress/egress — pods can only talk
+# to what they explicitly need. Default-deny all, then whitelist.
+
+---
+# Default deny-all ingress + egress for the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: groceryos
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# Allow API pods to receive traffic from the ingress controller only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: groceryos
+spec:
+  podSelector:
+    matchLabels:
+      app: groceryos
+      component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+
+---
+# Allow API pods to egress to: Postgres, Redis, external APIs (DNS + HTTPS)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-egress
+  namespace: groceryos
+spec:
+  podSelector:
+    matchLabels:
+      app: groceryos
+      component: api
+  policyTypes:
+    - Egress
+  egress:
+    # DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # PostgreSQL (internal)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis (internal)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6380  # TLS port
+          protocol: TCP
+
+    # External HTTPS (Stripe, Resend, Twilio etc.)
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# PodDisruptionBudget — always keep at least 2 replicas during rolling updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: groceryos-api-pdb
+  namespace: groceryos
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: groceryos
+      component: api
+
+---
+# HorizontalPodAutoscaler — scale on CPU
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: groceryos-api-hpa
+  namespace: groceryos
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: groceryos-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

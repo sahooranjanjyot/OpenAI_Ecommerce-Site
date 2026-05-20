@@ -1,77 +1,117 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
+import { z } from "zod";
 
-export async function GET() {
-  try {
-    const productsCount = await prisma.product.count();
-    
-    if (productsCount === 0) {
-      await prisma.product.createMany({
-        data: [
-          { name: "Apple", category: "Fruits", price: 1.20, stock: 50, enabled: true, image: "", onSale: false, unit: "kg" },
-          { name: "Banana", category: "Fruits", price: 0.90, stock: 40, enabled: true, image: "", onSale: false, unit: "kg" },
-          { name: "Milk", category: "Dairy", price: 1.10, stock: 30, enabled: true, image: "", onSale: false, unit: "litre" },
-          { name: "Potato Chips", category: "Snacks", price: 1.50, stock: 60, enabled: true, image: "", onSale: false, unit: "pack" },
-          { name: "Orange Juice", category: "Beverages", price: 2.00, stock: 20, enabled: true, image: "", onSale: false, unit: "litre" },
-        ]
-      });
-    }
+// ── Input Validation (G-011, G-014) ──────────────────────────────────────────
+const ProductSchema = z.object({
+  name:        z.string().min(1).max(200),
+  category:    z.string().min(1).max(100),
+  price:       z.number().positive("Price must be positive"),
+  wasPrice:    z.number().positive().optional().nullable(),
+  onSale:      z.boolean().optional().default(false),
+  stock:       z.number().int().min(0, "Stock cannot be negative"),
+  unit:        z.string().min(1).max(50),
+  image:       z.string().optional().default(""),
+  description: z.string().max(2000).optional().default(""),
+  enabled:     z.boolean().optional().default(true),
+  hidden:      z.boolean().optional().default(false),
+  featured:    z.boolean().optional().default(false),
+});
 
-    const products = await prisma.product.findMany();
-    return NextResponse.json(products);
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to fetch products" }, { status: 500 });
-  }
-}
+const UpdateProductSchema = ProductSchema.partial().extend({
+  id: z.number().int().positive("Valid product ID required"),
+});
 
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const product = await prisma.product.create({
-      data: {
-        name: body.name,
-        category: body.category,
-        price: body.price,
-        wasPrice: body.wasPrice,
-        onSale: body.onSale,
-        stock: body.stock,
-        unit: body.unit,
-        image: body.image,
-        description: body.description,
-        enabled: body.enabled,
-        hidden: body.hidden,
-        featured: body.featured,
-      },
-    });
-    return NextResponse.json(product);
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to create product" }, { status: 500 });
-  }
-}
-
-export async function PUT(req: Request) {
-  try {
-    const body = await req.json();
-    const { id, ...data } = body;
-    const product = await prisma.product.update({
-      where: { id },
-      data,
-    });
-    return NextResponse.json(product);
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to update product" }, { status: 500 });
-  }
-}
-
-export async function DELETE(req: Request) {
+// ── GET /api/products — public read with pagination ──────────────────────────
+// FIX C-B2-5: Removed auto-seed from GET endpoint (was a race condition risk)
+// FIX PERF-002: Added pagination — no longer returns all rows
+export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
-    
-    await prisma.product.delete({ where: { id: parseInt(id) } });
+    const page     = Math.max(1, parseInt(searchParams.get("page")     ?? "1",  10));
+    const limit    = Math.min(100, parseInt(searchParams.get("limit")   ?? "24", 10));
+    const category = searchParams.get("category") ?? undefined;
+    const featured = searchParams.get("featured") === "true" ? true : undefined;
+    const enabled  = searchParams.get("all") === "true" ? undefined : true;
+
+    const where: any = {};
+    if (enabled  !== undefined) where.enabled  = enabled;
+    if (category !== undefined) where.category = category;
+    if (featured !== undefined) where.featured = featured;
+
+    const [products, total] = await Promise.all([
+      prisma.product.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: (page - 1) * limit }),
+      prisma.product.count({ where }),
+    ]);
+
+    return NextResponse.json({ products, total, page, pages: Math.ceil(total / limit), limit });
+  } catch {
+    return NextResponse.json({ error: "Failed to fetch products." }, { status: 500 });
+  }
+}
+
+// ── POST /api/products — admin only: create product ─────────────────────────
+export async function POST(req: Request) {
+  // G-002: Admin auth check
+  const adminToken = req.headers.get("x-admin-token");
+  if (adminToken !== process.env.ADMIN_API_TOKEN) {
+    return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
+  }
+
+  try {
+    const raw = await req.json();
+    const parsed = ProductSchema.safeParse(raw);
+    if (!parsed.success) {
+      { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
+    }
+
+    const product = await prisma.product.create({ data: parsed.data });
+    return NextResponse.json(product, { status: 201 });
+  } catch {
+    return NextResponse.json({ error: "Failed to create product." }, { status: 500 });
+  }
+}
+
+// ── PUT /api/products — admin only: update product ───────────────────────────
+export async function PUT(req: Request) {
+  const adminToken = req.headers.get("x-admin-token");
+  if (adminToken !== process.env.ADMIN_API_TOKEN) {
+    return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
+  }
+
+  try {
+    const raw = await req.json();
+    const parsed = UpdateProductSchema.safeParse(raw);
+    if (!parsed.success) {
+      { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
+    }
+
+    const { id, ...data } = parsed.data;
+    const product = await prisma.product.update({ where: { id }, data });
+    return NextResponse.json(product);
+  } catch {
+    return NextResponse.json({ error: "Failed to update product." }, { status: 500 });
+  }
+}
+
+// ── DELETE /api/products — admin only: delete product ────────────────────────
+export async function DELETE(req: Request) {
+  const adminToken = req.headers.get("x-admin-token");
+  if (adminToken !== process.env.ADMIN_API_TOKEN) {
+    return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
+  }
+
+  try {
+    const { searchParams } = new URL(req.url);
+    const rawId = searchParams.get("id");
+    if (!rawId) return NextResponse.json({ error: "Product ID is required." }, { status: 400 });
+
+    const id = parseInt(rawId, 10);
+    if (isNaN(id)) return NextResponse.json({ error: "Invalid product ID." }, { status: 400 });
+
+    await prisma.product.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch (error) {
-    return NextResponse.json({ error: "Failed to delete product" }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Failed to delete product." }, { status: 500 });
   }
 }

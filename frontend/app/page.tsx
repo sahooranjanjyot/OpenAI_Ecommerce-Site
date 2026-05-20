@@ -102,7 +102,7 @@ export default function GroceryUATReadyApp() {
   const [paymentOtp, setPaymentOtp] = useState("");
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [checkoutEmail, setCheckoutEmail] = useState("");
-  const [adminProducts, setAdminProducts] = useState<any[]>([]);
+  const [adminProducts, setAdminProducts] = useState<any[]>(productsSeed as any[]);
   const [adminEmployees, setAdminEmployees] = useState<any[]>([]);
   const products = adminProducts.filter(p => !p.hidden && p.enabled !== false);
   const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
@@ -308,47 +308,12 @@ export default function GroceryUATReadyApp() {
     };
   }, [scanningPos]);
 
+  const [mounted, setMounted] = useState(true);
   useEffect(() => {
-    Promise.all([
-      fetch("/api/products").then(r => r.json()),
-      fetch("/api/orders").then(r => r.json()),
-      fetch("/api/customers").then(r => r.json()),
-      fetch("/api/promos").then(r => r.json()),
-      fetch("/api/inventory").then((r) => r.ok ? r.json() : []),
-      fetch("/api/returns").then((r) => r.ok ? r.json() : []),
-      fetch("/api/employees").then((r) => r.ok ? r.json() : [])
-    ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData, employeesData]) => {
-      setAdminProducts(productsData || []);
-      setAdminOrders(ordersData || []);
-      setAdminCustomers(customersData || []);
-      setPromos(promosData || []);
-      setInventoryBatches(inventoryData || []);
-      setAdminReturns(returnsData || []);
-      setAdminEmployees(employeesData || []);
-
-      const parsedAddrs: Record<string, string[]> = {};
-      const parsedOrders: Record<string, any[]> = {};
-      if (Array.isArray(ordersData)) {
-        ordersData.forEach(o => {
-          const boundPhone = o.customerPhone || o.customer?.phone;
-          const boundAddress = o.deliveryAddress || o.address;
-
-          if (boundPhone) {
-            parsedOrders[boundPhone] = [...(parsedOrders[boundPhone] || []), { total: o.total, items: o.items, address: boundAddress, date: o.createdAt }];
-            if (boundAddress) {
-              parsedAddrs[boundPhone] = Array.from(new Set([...(parsedAddrs[boundPhone] || []), boundAddress]));
-            }
-          }
-        });
-      }
-      setSavedAddresses(parsedAddrs);
-      setOrderHistory(parsedOrders);
-    }).catch(console.error);
-  }, []);
-
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
+    // Mount immediately with seed data so UI renders without a database
+    setAdminProducts(productsSeed as any[]);
     setMounted(true);
+
     if (typeof window !== "undefined") {
       try {
         const storedBuyer = localStorage.getItem("groceryos_buyer");
@@ -360,6 +325,43 @@ export default function GroceryUATReadyApp() {
       };
       checkHash();
       window.addEventListener("hashchange", checkHash);
+
+      // Then attempt to load live data from the API (replaces seed data if DB is available)
+      Promise.all([
+        fetch("/api/products").then(r => r.ok ? r.json() : null),
+        fetch("/api/orders").then(r => r.ok ? r.json() : null),
+        fetch("/api/customers").then(r => r.ok ? r.json() : null),
+        fetch("/api/promos").then(r => r.ok ? r.json() : null),
+        fetch("/api/inventory").then(r => r.ok ? r.json() : null),
+        fetch("/api/returns").then(r => r.ok ? r.json() : null),
+        fetch("/api/employees").then(r => r.ok ? r.json() : null),
+      ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData, employeesData]) => {
+        if (productsData) setAdminProducts(productsData);
+        if (ordersData) setAdminOrders(ordersData);
+        if (customersData) setAdminCustomers(customersData);
+        if (promosData) setPromos(promosData);
+        if (inventoryData) setInventoryBatches(inventoryData);
+        if (returnsData) setAdminReturns(returnsData);
+        if (employeesData) setAdminEmployees(employeesData);
+
+        const parsedAddrs: Record<string, string[]> = {};
+        const parsedOrders: Record<string, any[]> = {};
+        if (Array.isArray(ordersData)) {
+          ordersData.forEach(o => {
+            const boundPhone = o.customerPhone || o.customer?.phone;
+            const boundAddress = o.deliveryAddress || o.address;
+            if (boundPhone) {
+              parsedOrders[boundPhone] = [...(parsedOrders[boundPhone] || []), { total: o.total, items: o.items, address: boundAddress, date: o.createdAt }];
+              if (boundAddress) {
+                parsedAddrs[boundPhone] = Array.from(new Set([...(parsedAddrs[boundPhone] || []), boundAddress]));
+              }
+            }
+          });
+        }
+        setSavedAddresses(parsedAddrs);
+        setOrderHistory(parsedOrders);
+      }).catch(() => { /* DB not available — seed data already shown */ });
+
       return () => window.removeEventListener("hashchange", checkHash);
     }
   }, []);

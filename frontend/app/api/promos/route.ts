@@ -1,3 +1,4 @@
+import { requireAdmin } from "../../../lib/auth-middleware";
 import { NextResponse } from "next/server";
 import { prisma } from "../../../lib/prisma";
 
@@ -11,6 +12,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
   try {
     const body = await req.json();
     const data = await prisma.promo.create({
@@ -33,6 +36,8 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
   try {
     const body = await req.json();
     const { id, ...data } = body;
@@ -47,6 +52,8 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
