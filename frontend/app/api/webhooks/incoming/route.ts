@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { prisma } from "../../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
 /**
@@ -69,7 +69,7 @@ function verifyGroceryOSSignature(rawBody: string, signature: string, secret: st
 
 const EventSchema = z.object({
   event:     z.string().min(1).max(100),
-  payload:   z.record(z.any()),
+  payload:   z.record(z.string(), z.any()),
   timestamp: z.number().optional(),
   id:        z.string().optional(), // idempotency key from provider
 });

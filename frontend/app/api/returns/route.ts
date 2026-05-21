@@ -1,8 +1,8 @@
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 const ReturnItemSchema = z.object({
   productName: z.string().min(1),

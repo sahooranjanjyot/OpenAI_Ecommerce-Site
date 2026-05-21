@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 /**
  * Bundles (G-165)
@@ -28,7 +28,7 @@ const PutSchema = BundleSchema.partial().extend({
 // ── GET /api/bundles — public ─────────────────────────────────────────────────
 export async function GET(_req: Request) {
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const bundles = await (prisma as any).bundle.findMany({
       where:   { enabled: true },
       orderBy: { createdAt: "desc" },
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const parsed = BundleSchema.safeParse(await req.json());
     if (!parsed.success) {
       const msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input";
@@ -80,7 +80,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // FIX MEDIUM: Validate with Zod — id was previously unvalidated from req.json()
     const parsed = PutSchema.safeParse(await req.json());
@@ -106,7 +106,7 @@ export async function DELETE(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // FIX MEDIUM: Validate id — parseInt("0", 10) or NaN previously caused delete({id:0})
     const rawId = new URL(req.url).searchParams.get("id");

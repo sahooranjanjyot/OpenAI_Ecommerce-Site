@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 import { createHmac } from "crypto";
 import { jwtVerify } from "jose";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 /** Extract caller identity from JWT cookie (returns null for unauthenticated) */
 async function getCallerSession(req: Request): Promise<{ customerId?: number; role?: string } | null> {
@@ -33,7 +33,7 @@ async function getCallerSession(req: Request): Promise<{ customerId?: number; ro
  * FIX REL-001: Idempotency key via x-idempotency-key header
  */
 
-import { withIdempotency } from "../../../lib/resilience";
+import { withIdempotency } from "@/lib/resilience";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   new:        ["processing", "cancelled"],

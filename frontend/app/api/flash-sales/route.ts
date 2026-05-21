@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 /**
  * Flash Sales / Time-Limited Deals (G-145, G-164)
@@ -47,7 +47,7 @@ function safeParseProductIds(productIdsJson: string | null | undefined, saleId?:
 // ── GET /api/flash-sales — active sales with countdown ────────────────────────
 export async function GET(req: Request) {
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const now   = new Date();
     const sales = await (prisma as any).flashSale.findMany({
       where:   { active: true, startAt: { lte: now }, endAt: { gte: now } },
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma }  = await import("../../../lib/prisma");
+    const { prisma }  = await import("@/lib/prisma");
     const parsed = FlashSaleSchema.safeParse(await req.json());
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
@@ -106,7 +106,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { id, active } = await req.json();
     const sale = await (prisma as any).flashSale.update({ where: { id }, data: { active } });
     return NextResponse.json(sale);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
 // ── Input Validation (G-011, G-014) ──────────────────────────────────────────
@@ -28,8 +28,6 @@ const UpdateProductSchema = ProductSchema.partial().extend({
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const page     = Math.max(1, parseInt(searchParams.get("page")     ?? "1",  10));
-    const limit    = Math.min(100, parseInt(searchParams.get("limit")   ?? "24", 10));
     const category = searchParams.get("category") ?? undefined;
     const featured = searchParams.get("featured") === "true" ? true : undefined;
     const enabled  = searchParams.get("all") === "true" ? undefined : true;
@@ -39,12 +37,25 @@ export async function GET(req: Request) {
     if (category !== undefined) where.category = category;
     if (featured !== undefined) where.featured = featured;
 
-    const [products, total] = await Promise.all([
-      prisma.product.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: (page - 1) * limit }),
-      prisma.product.count({ where }),
-    ]);
+    const hasPage = searchParams.has("page");
+    const hasLimit = searchParams.has("limit");
 
-    return NextResponse.json({ products, total, page, pages: Math.ceil(total / limit), limit });
+    if (hasPage || hasLimit) {
+      const page     = Math.max(1, parseInt(searchParams.get("page")     ?? "1",  10));
+      const limit    = Math.min(100, parseInt(searchParams.get("limit")   ?? "24", 10));
+
+      const [products, total] = await Promise.all([
+        prisma.product.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: (page - 1) * limit }),
+        prisma.product.count({ where }),
+      ]);
+
+      const normalised = products.map(p => ({ ...p, price: p.price / 100, wasPrice: p.wasPrice != null ? p.wasPrice / 100 : null }));
+      return NextResponse.json({ products: normalised, total, page, pages: Math.ceil(total / limit), limit });
+    } else {
+      const products = await prisma.product.findMany({ where, orderBy: { createdAt: "desc" } });
+      const normalised = products.map(p => ({ ...p, price: p.price / 100, wasPrice: p.wasPrice != null ? p.wasPrice / 100 : null }));
+      return NextResponse.json(normalised);
+    }
   } catch {
     return NextResponse.json({ error: "Failed to fetch products." }, { status: 500 });
   }
@@ -60,13 +71,17 @@ export async function POST(req: Request) {
 
   try {
     const raw = await req.json();
+    // Accept price in pounds, store as pence (multiply × 100)
+    if (raw.price !== undefined) raw.price = Math.round(parseFloat(raw.price) * 100);
+    if (raw.wasPrice !== undefined && raw.wasPrice !== null) raw.wasPrice = Math.round(parseFloat(raw.wasPrice) * 100);
     const parsed = ProductSchema.safeParse(raw);
     if (!parsed.success) {
       { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
     }
 
     const product = await prisma.product.create({ data: parsed.data });
-    return NextResponse.json(product, { status: 201 });
+    // Return with price in pounds
+    return NextResponse.json({ ...product, price: product.price / 100, wasPrice: product.wasPrice != null ? product.wasPrice / 100 : null }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to create product." }, { status: 500 });
   }
@@ -81,6 +96,9 @@ export async function PUT(req: Request) {
 
   try {
     const raw = await req.json();
+    // Accept price in pounds, store as pence
+    if (raw.price !== undefined) raw.price = Math.round(parseFloat(raw.price) * 100);
+    if (raw.wasPrice !== undefined && raw.wasPrice !== null) raw.wasPrice = Math.round(parseFloat(raw.wasPrice) * 100);
     const parsed = UpdateProductSchema.safeParse(raw);
     if (!parsed.success) {
       { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
@@ -88,7 +106,8 @@ export async function PUT(req: Request) {
 
     const { id, ...data } = parsed.data;
     const product = await prisma.product.update({ where: { id }, data });
-    return NextResponse.json(product);
+    // Return with price in pounds
+    return NextResponse.json({ ...product, price: product.price / 100, wasPrice: product.wasPrice != null ? product.wasPrice / 100 : null });
   } catch {
     return NextResponse.json({ error: "Failed to update product." }, { status: 500 });
   }

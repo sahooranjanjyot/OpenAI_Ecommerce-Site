@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -11,7 +11,7 @@ import { z } from "zod";
  */
 
 import { createVerify } from "crypto";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 const ALLOWED_ALEXA_CERT_DOMAINS = ["s3.amazonaws.com", "s3.dualstack.us-east-1.amazonaws.com"];
 const TIMESTAMP_TOLERANCE_MS = 150_000; // 150 seconds

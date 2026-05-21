@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
 
 /**
@@ -30,7 +30,7 @@ const counters = {
 
 const EventSchema = z.object({
   event:      z.enum(["page_view","product_view","add_to_cart","remove_from_cart","checkout_start","purchase","search","login","signup","filter_use","sort_use","coupon_apply"]),
-  properties: z.record(z.unknown()).optional().default({}),
+  properties: z.record(z.string(), z.unknown()).optional().default({}),
   // FIX: sessionId must be UUID or safe alphanumeric — reject arbitrary strings
   sessionId:  z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/, "sessionId must be alphanumeric"),
   userId:     z.string().max(100).optional(),

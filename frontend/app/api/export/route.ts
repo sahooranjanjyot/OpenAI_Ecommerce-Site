@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
   const startDate = searchParams.get("startDate");
   const endDate   = searchParams.get("endDate");
 
-  const { prisma } = await import("../../../lib/prisma");
+  const { prisma } = await import("@/lib/prisma");
 
   // ── Product Catalog PDF (HTML) ──────────────────────────────────────────────
   if (type === "catalog") {

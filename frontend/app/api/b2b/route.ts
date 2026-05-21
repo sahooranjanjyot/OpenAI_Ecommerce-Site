@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin, requireAuth } from "../../../lib/auth-middleware";
+import { requireAdmin, requireAuth } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -65,7 +65,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     if (isAdmin && !accountId) {
       // Admin: list all B2B accounts
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
     const parsed = B2BApplicationSchema.safeParse(await req.json());
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const account = await (prisma as any).b2bAccount.create({
       data: { ...parsed.data, status: "pending", discountRate: 0, creditLimit: 0 },
     });
@@ -116,7 +116,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { accountId, status, discountRate, creditLimit, b2bPrice } = await req.json();
 
     if (accountId) {

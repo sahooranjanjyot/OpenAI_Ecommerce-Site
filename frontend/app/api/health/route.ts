@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Health Check (G-019)
@@ -9,8 +9,8 @@ import { requireAdmin } from "../../../lib/auth-middleware";
  *   environment reconnaissance by attackers.
  */
 
-import { prisma } from "../../../lib/prisma";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { cache } from "@/lib/cache";
 
 async function checkDatabase(): Promise<{ ok: boolean; latencyMs: number }> {
   const start = Date.now();

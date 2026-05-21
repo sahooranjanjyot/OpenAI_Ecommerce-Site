@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -12,10 +12,10 @@ export async function GET(req: Request) {
 
   try {
     // Import prisma here to avoid circular refs
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const products = await prisma.product.findMany({
-      include: { batches: { orderBy: { createdAt: "desc" }, take: 5 } },
+      include: { inventoryBatches: { orderBy: { createdAt: "desc" }, take: 5 } },
       orderBy: { category: "asc" },
     });
 
@@ -27,11 +27,13 @@ export async function GET(req: Request) {
     let outOfStockCount = 0;
 
     const items = products.map(p => {
-      const latestBatch = p.batches.find(b => b.quantity > 0);
-      const costPrice   = (latestBatch as any)?.costPrice ?? 0;
-      const stockValue  = p.price * p.stock;
-      const costValue   = costPrice * p.stock;
-      const margin      = costPrice > 0 ? parseFloat(((p.price - costPrice) / p.price * 100).toFixed(1)) : null;
+      const latestBatch = p.inventoryBatches.find(b => b.quantity > 0);
+      const costPricePence = (latestBatch as any)?.costPrice ?? 0;
+      const pricePounds  = p.price / 100;
+      const costPounds   = costPricePence / 100;
+      const stockValue   = pricePounds * p.stock;
+      const costValue    = costPounds * p.stock;
+      const margin       = costPricePence > 0 ? parseFloat(((p.price - costPricePence) / p.price * 100).toFixed(1)) : null;
 
       grandTotalValue += stockValue;
       totalSKUs++;
@@ -48,7 +50,7 @@ export async function GET(req: Request) {
 
       return {
         id: p.id, name: p.name, category: p.category,
-        price: p.price, costPrice, stock: p.stock, unit: p.unit,
+        price: pricePounds, costPrice: costPounds, stock: p.stock, unit: p.unit,
         stockValue: parseFloat(stockValue.toFixed(2)),
         costValue:  parseFloat(costValue.toFixed(2)),
         margin,

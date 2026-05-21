@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { searchParams } = new URL(req.url);
     const locationId = parseInt(searchParams.get("locationId") ?? "0", 10);
     const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 100);
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const body = await req.json();
 
     if (body.action === "stock_move") {

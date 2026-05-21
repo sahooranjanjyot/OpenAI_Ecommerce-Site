@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
 
 /**

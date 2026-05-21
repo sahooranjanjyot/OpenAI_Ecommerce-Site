@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -91,7 +91,7 @@ export async function PUT(req: Request) {
 
     const { type, data } = body.event ?? {};
     const orderId = parseInt(data?.metadata?.order_id ?? "0", 10);
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     switch (type) {
       case "charge:confirmed":

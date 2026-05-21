@@ -41,15 +41,27 @@ const ADMIN_RATE_MAX    = 5;
 const ADMIN_RATE_WINDOW = 30 * 60 * 1000; // 30 minutes
 
 function checkAdminRateLimit(ip: string): boolean {
+  // In local dev, localhost resolves as 'unknown' — skip rate limiting
+  if (ip === 'unknown' && process.env.NODE_ENV !== 'production') return true;
+  const now   = Date.now();
+  const entry = adminRateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    adminRateLimitMap.set(ip, { count: 0, resetAt: now + ADMIN_RATE_WINDOW });
+    return true;
+  }
+  if (entry.count >= ADMIN_RATE_MAX) return false;
+  return true;
+}
+
+function recordFailedAttempt(ip: string): void {
+  if (ip === 'unknown' && process.env.NODE_ENV !== 'production') return;
   const now   = Date.now();
   const entry = adminRateLimitMap.get(ip);
   if (!entry || now > entry.resetAt) {
     adminRateLimitMap.set(ip, { count: 1, resetAt: now + ADMIN_RATE_WINDOW });
-    return true;
+  } else {
+    entry.count++;
   }
-  if (entry.count >= ADMIN_RATE_MAX) return false;
-  entry.count++;
-  return true;
 }
 
 // ── Zod schemas (G-011) ───────────────────────────────────────────────────────
@@ -63,6 +75,15 @@ const VerifyOTPSchema = z.object({
   action: z.literal('verify_otp'),
   otp:    z.string().length(6).regex(/^\d{6}$/, 'OTP must be 6 digits'),
 });
+
+const VerifyMFASchema = z.object({
+  action:   z.literal('verify_mfa'),
+  mfaToken: z.string().min(32).max(128),
+  totpCode: z.string().length(6).regex(/^\d{6}$/, 'TOTP code must be 6 digits'),
+});
+
+// In-memory MFA token store (tied to mfaToken → adminEmail, short-lived 5 min)
+const MFA_TOKEN_STORE = new Map<string, { email: string; expires: number }>();
 
 /** Constant-time string comparison to prevent timing attacks (FIXED H-B2-2) */
 function safeEqual(a: string, b: string): boolean {
@@ -86,6 +107,7 @@ async function verifyAdminPassword(password: string): Promise<boolean> {
 export async function POST(req: Request) {
   try {
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
+    // Check if already locked out (only counts prior failures)
     if (!checkAdminRateLimit(ip)) {
       return NextResponse.json(
         { error: 'Too many requests. Admin access locked for 30 minutes.' },
@@ -111,6 +133,14 @@ export async function POST(req: Request) {
 
       // Generic error — prevents username enumeration (OWASP A07)
       if (!validUser || !validPass) {
+        // Only count failures against the rate limit, not every request
+        recordFailedAttempt(ip);
+        if (!checkAdminRateLimit(ip)) {
+          return NextResponse.json(
+            { error: 'Too many failed attempts. Admin access locked for 30 minutes.' },
+            { status: 429 }
+          );
+        }
         return NextResponse.json({ error: 'Invalid credentials.' }, { status: 401 });
       }
 
@@ -153,10 +183,13 @@ export async function POST(req: Request) {
         }
       }
 
-      const maskedEmail = ADMIN_EMAIL.replace(/(.{2}).+(@.+)/, '$1***$2');
+      const maskedEmail = ADMIN_EMAIL ? ADMIN_EMAIL.replace(/(.{2}).+(@.+)/, '$1***$2') : '';
+      const isDev = process.env.NODE_ENV !== 'production';
       const msg = emailSent
         ? `OTP sent to ${maskedEmail}`
-        : 'OTP generated but email delivery is unavailable. Check server email configuration.';
+        : isDev
+          ? `DEV MODE: OTP email not configured. Your OTP is: ${code}`
+          : 'OTP generated but email delivery is unavailable. Check server email configuration.';
 
       return NextResponse.json({ success: true, message: msg });
     }
@@ -189,15 +222,95 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Invalid OTP.' }, { status: 401 });
       }
 
-      // Issue a short-lived session token (in production: use a proper JWT/session)
+      // OTP verified. Check if MFA is configured for this admin (G-076)
+      let mfaRequired = false;
+      let mfaToken: string | undefined;
+      try {
+        const { prisma } = await import('@/lib/prisma');
+        const mfaConfig = await (prisma as any).mFAConfig?.findFirst({
+          where: { email: ADMIN_EMAIL || 'admin', enabled: true },
+        });
+        if (mfaConfig) {
+          mfaRequired = true;
+          const { randomBytes } = await import('crypto');
+          mfaToken = randomBytes(32).toString('hex');
+          // Store with 5 min expiry
+          MFA_TOKEN_STORE.set(mfaToken, { email: ADMIN_EMAIL || 'admin', expires: Date.now() + 5 * 60 * 1000 });
+        }
+      } catch {
+        // MFA model not available — skip MFA check
+      }
+
+      if (mfaRequired && mfaToken) {
+        return NextResponse.json({
+          success:    true,
+          requiresMfa: true,
+          mfaToken,
+          message:    'OTP verified. Please provide your TOTP code to complete login.',
+        });
+      }
+
+      // No MFA — issue session token directly
       const { randomBytes } = await import('crypto');
       const sessionToken = randomBytes(32).toString('hex');
 
       return NextResponse.json({
         success: true,
         message: 'Admin authenticated successfully.',
-        sessionToken, // short-lived; invalidate after use
+        sessionToken,
       });
+    }
+
+    // ── VERIFY MFA TOTP (G-076) ───────────────────────────────────────
+    if (action === 'verify_mfa') {
+      const parsed = VerifyMFASchema.safeParse(raw);
+      if (!parsed.success) {
+        const msg = (parsed.error as any).issues?.[0]?.message ?? 'Invalid input';
+        return NextResponse.json({ error: msg }, { status: 400 });
+      }
+      const { mfaToken, totpCode } = parsed.data;
+
+      const mfaRecord = MFA_TOKEN_STORE.get(mfaToken);
+      if (!mfaRecord) {
+        return NextResponse.json({ error: 'MFA session expired or invalid. Please restart login.' }, { status: 400 });
+      }
+      if (Date.now() > mfaRecord.expires) {
+        MFA_TOKEN_STORE.delete(mfaToken);
+        return NextResponse.json({ error: 'MFA session expired. Please restart login.' }, { status: 400 });
+      }
+
+      // Verify TOTP code against the stored secret
+      try {
+        const { prisma } = await import('@/lib/prisma');
+        const mfaConfig = await (prisma as any).mFAConfig?.findFirst({
+          where: { email: mfaRecord.email, enabled: true },
+        });
+        if (!mfaConfig) {
+          MFA_TOKEN_STORE.delete(mfaToken);
+          return NextResponse.json({ error: 'MFA configuration not found.' }, { status: 400 });
+        }
+
+        const { authenticator } = await import('otplib');
+        const isValid = authenticator.check(totpCode, mfaConfig.secret);
+
+        if (!isValid) {
+          recordFailedAttempt(ip);
+          return NextResponse.json({ error: 'Invalid authenticator code.' }, { status: 401 });
+        }
+
+        MFA_TOKEN_STORE.delete(mfaToken);
+        const { randomBytes } = await import('crypto');
+        const sessionToken = randomBytes(32).toString('hex');
+
+        return NextResponse.json({
+          success:      true,
+          message:      'Admin authenticated successfully (MFA verified).',
+          sessionToken,
+        });
+      } catch (mfaErr: any) {
+        console.error('[ADMIN MFA] Verification error:', mfaErr.message);
+        return NextResponse.json({ error: 'MFA verification failed.' }, { status: 500 });
+      }
     }
 
     // ── FORGOT PASSWORD ───────────────────────────────────────────────────────

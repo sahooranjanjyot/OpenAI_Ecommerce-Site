@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "../../../lib/prisma";
-import { cache } from "../../../lib/cache";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { cache } from "@/lib/cache";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Web Push Notifications (G-094, G-093)

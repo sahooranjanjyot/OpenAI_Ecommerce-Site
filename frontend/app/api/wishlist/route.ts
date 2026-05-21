@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { requireAuth } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAuth } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 // ── Wishlist — stored per session/customer email (G-058/G-068/G-096) ──────────
 // CSRF protection is handled globally by middleware

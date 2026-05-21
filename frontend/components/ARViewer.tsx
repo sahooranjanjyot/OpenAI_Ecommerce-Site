@@ -12,20 +12,14 @@ import { useEffect } from "react";
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      "model-viewer": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement> & {
-        src?: string;
-        poster?: string;
-        alt?: string;
-        "ar"?: "";
-        "ar-modes"?: string;
-        "camera-controls"?: "";
-        "auto-rotate"?: "";
-        "shadow-intensity"?: string;
-        "environment-image"?: string;
-        "exposure"?: string;
-        ios_src?: string;
-        style?: React.CSSProperties;
-      }, HTMLElement>
+      "model-viewer": any;
+    }
+  }
+  namespace React {
+    namespace JSX {
+      interface IntrinsicElements {
+        "model-viewer": any;
+      }
     }
   }
 }

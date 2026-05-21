@@ -104,7 +104,7 @@ export async function PUT(req: Request) {
 
     // Update internal order status
     if (internalOrderId) {
-      const { prisma } = await import("../../../lib/prisma");
+      const { prisma } = await import("@/lib/prisma");
       await prisma.order.update({ where: { id: internalOrderId }, data: { status: "processing" } });
     }
 

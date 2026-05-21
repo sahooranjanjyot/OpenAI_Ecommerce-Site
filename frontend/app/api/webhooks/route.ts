@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { createHmac, timingSafeEqual, randomBytes } from "crypto";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { cache } from "../../../lib/cache";
+import { cache } from "@/lib/cache";
 
 /**
  * Webhooks — outbound event notifications (G-243, G-244)

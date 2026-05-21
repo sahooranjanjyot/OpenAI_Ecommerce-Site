@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 /**
  * Auth middleware now uses Redis (via lib/cache.ts) for rate limiting
@@ -88,7 +88,7 @@ async function checkLockout(emailHash: string): Promise<{ locked: boolean; remai
   try {
     const val = await cache.get(`auth:lockout:${emailHash}`);
     if (!val) return { locked: false };
-    const lockedUntil = parseInt(val, 10);
+    const lockedUntil = parseInt(String(val), 10);
     const remaining   = Math.ceil((lockedUntil - Date.now()) / 60000);
     return remaining > 0 ? { locked: true, remaining } : { locked: false };
   } catch { return { locked: false }; }
@@ -97,7 +97,8 @@ async function checkLockout(emailHash: string): Promise<{ locked: boolean; remai
 async function recordFailure(emailHash: string) {
   try {
     const countKey = `auth:failures:${emailHash}`;
-    const count    = parseInt((await cache.get(countKey)) ?? "0", 10) + 1;
+    const rawVal   = await cache.get(countKey);
+    const count    = parseInt(String(rawVal ?? "0"), 10) + 1;
     await cache.set(countKey, String(count), LOCKOUT_SECS);
     if (count >= MAX_FAILURES) {
       await cache.set(`auth:lockout:${emailHash}`, String(Date.now() + LOCKOUT_SECS * 1000), LOCKOUT_SECS);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -46,7 +46,7 @@ const PutSchema = PostSchema.partial().extend({
 // ── GET /api/blog ─────────────────────────────────────────────────────────────
 export async function GET(req: Request) {
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { searchParams } = new URL(req.url);
     const slug     = searchParams.get("slug");
     const category = searchParams.get("category");
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const parsed = PostSchema.safeParse(await req.json());
     if (!parsed.success) {
       const msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input";
@@ -118,7 +118,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // FIX MEDIUM: Validate with Zod instead of bare destructuring
     const parsed = PutSchema.safeParse(await req.json());
@@ -156,7 +156,7 @@ export async function DELETE(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const id = parseInt(new URL(req.url).searchParams.get("id") ?? "0", 10);
     if (!id || id <= 0) return NextResponse.json({ error: "Valid id required." }, { status: 400 });
     await (prisma as any).blogPost.delete({ where: { id } });

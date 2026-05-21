@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { featureFlags } from "../../../lib/feature-flags";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { featureFlags } from "@/lib/feature-flags";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**

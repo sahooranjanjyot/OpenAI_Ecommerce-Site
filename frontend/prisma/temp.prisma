@@ -1,0 +1,500 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model AbandonedCart {
+  id        Int      @id @default(autoincrement())
+  sessionId String   @unique
+  email     String?
+  items     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+}
+
+model Affiliate {
+  id                  Int                   @id @default(autoincrement())
+  name                String
+  email               String                @unique
+  code                String                @unique
+  type                String                @default("affiliate")
+  website             String?
+  commissionRate      Float                 @default(5)
+  totalClicks         Int                   @default(0)
+  totalOrders         Int                   @default(0)
+  totalEarnings       Float                 @default(0)
+  active              Boolean               @default(true)
+  createdAt           DateTime              @default(now())
+  AffiliateConversion AffiliateConversion[]
+}
+
+model AffiliateConversion {
+  id          Int       @id @default(autoincrement())
+  affiliateId Int
+  orderId     Int
+  orderTotal  Float
+  commission  Float
+  createdAt   DateTime  @default(now())
+  Affiliate   Affiliate @relation(fields: [affiliateId], references: [id])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  action    String
+  resource  String
+  userId    String   @default("admin")
+  ip        String   @default("")
+  payload   String   @default("")
+  checksum  String
+  createdAt DateTime @default(now())
+}
+
+model B2BAccount {
+  id            Int        @id @default(autoincrement())
+  companyName   String
+  contactName   String
+  email         String     @unique
+  phone         String
+  website       String?
+  vatNumber     String?
+  companyReg    String?
+  monthlyVolume Float?
+  creditTerms   String     @default("pay_on_order")
+  industry      String?
+  status        String     @default("pending")
+  discountRate  Float      @default(0)
+  creditLimit   Float      @default(0)
+  createdAt     DateTime   @default(now())
+  B2BPrice      B2BPrice[]
+}
+
+model B2BPrice {
+  id         Int        @id @default(autoincrement())
+  accountId  Int
+  productId  Int
+  price      Float
+  minQty     Int        @default(1)
+  B2BAccount B2BAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, productId])
+}
+
+model BackInStockAlert {
+  id        Int      @id @default(autoincrement())
+  email     String
+  productId Int
+  notified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([email, productId])
+}
+
+model BlogPost {
+  id          Int       @id @default(autoincrement())
+  title       String
+  slug        String    @unique
+  excerpt     String    @default("")
+  content     String
+  category    String
+  tags        String    @default("[]")
+  image       String    @default("")
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  views       Int       @default(0)
+  author      String    @default("GroceryOS Team")
+  metaTitle   String?
+  metaDesc    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+}
+
+model Bundle {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String   @default("")
+  productIds  String
+  discount    Float    @default(10)
+  enabled     Boolean  @default(true)
+  image       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model Coupon {
+  id            Int       @id @default(autoincrement())
+  code          String    @unique
+  type          String
+  value         Float     @default(0)
+  minOrderValue Float     @default(0)
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String   @unique
+  address   String?
+  orders    Int      @default(0)
+  notes     String?
+  blocked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  email     String?  @unique
+  password  String?
+  Order     Order[]
+}
+
+model DigitalDownload {
+  id           Int      @id @default(autoincrement())
+  productId    Int
+  token        String   @unique
+  downloadUrl  String
+  licenseType  String   @default("single_use")
+  maxDownloads Int      @default(5)
+  downloads    Int      @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
+model Employee {
+  id        Int      @id @default(autoincrement())
+  userId    String   @unique
+  password  String
+  name      String
+  role      String   @default("cashier")
+  modules   String   @default("Instore POS,Orders")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  pin       String?
+}
+
+model FlashSale {
+  id         Int      @id @default(autoincrement())
+  name       String
+  discount   Float
+  productIds String
+  startAt    DateTime
+  endAt      DateTime
+  maxUses    Int?
+  usedCount  Int      @default(0)
+  code       String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+}
+
+model GiftCard {
+  id             Int      @id @default(autoincrement())
+  code           String   @unique
+  balance        Float
+  initialBalance Float
+  recipientEmail String?
+  message        String   @default("")
+  issuedBy       String   @default("admin")
+  active         Boolean  @default(true)
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+}
+
+model InventoryBatch {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  quantity  Float    @default(0)
+  remaining Float    @default(0)
+  costPrice Float    @default(0.0)
+  supplier  String?
+  channel   String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  Product   Product  @relation(fields: [productId], references: [id])
+}
+
+model Layaway {
+  id            Int      @id @default(autoincrement())
+  email         String
+  productId     Int
+  qty           Int      @default(1)
+  instalments   Int
+  totalAmount   Float
+  depositAmount Float
+  depositPct    Float
+  remaining     Float
+  paidAmount    Float    @default(0)
+  paidCount     Int      @default(0)
+  address       String
+  phone         String
+  schedule      String
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime
+}
+
+model Location {
+  id            Int             @id @default(autoincrement())
+  name          String
+  type          String          @default("store")
+  address       String?
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  LocationStock LocationStock[]
+}
+
+model LocationStock {
+  id         Int      @id @default(autoincrement())
+  locationId Int
+  productId  Int
+  qty        Float    @default(0)
+  Location   Location @relation(fields: [locationId], references: [id])
+
+  @@unique([locationId, productId])
+}
+
+model LoyaltyAccount {
+  id                 Int                  @id @default(autoincrement())
+  email              String               @unique
+  points             Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime
+  LoyaltyTransaction LoyaltyTransaction[]
+}
+
+model LoyaltyTransaction {
+  id             Int            @id @default(autoincrement())
+  email          String
+  type           String
+  points         Int
+  description    String         @default("")
+  createdAt      DateTime       @default(now())
+  LoyaltyAccount LoyaltyAccount @relation(fields: [email], references: [email])
+}
+
+model ModerationQueue {
+  id            Int       @id @default(autoincrement())
+  type          String
+  content       String
+  author        String
+  email         String
+  referenceId   Int       @default(0)
+  flagged       Boolean   @default(false)
+  reasons       String    @default("[]")
+  score         Int       @default(0)
+  status        String    @default("pending")
+  moderatorNote String?
+  moderatedAt   DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+model NewsletterSubscription {
+  id             Int       @id @default(autoincrement())
+  email          String    @unique
+  name           String    @default("")
+  preferences    String    @default("[]")
+  source         String    @default("website")
+  subscribed     Boolean   @default(true)
+  subscribedAt   DateTime  @default(now())
+  unsubscribedAt DateTime?
+}
+
+model Order {
+  id             Int      @id @default(autoincrement())
+  customerId     Int
+  status         String   @default("new")
+  total          Float
+  items          String
+  address        String?
+  createdAt      DateTime @default(now())
+  idempotencyKey String?  @unique
+  Customer       Customer @relation(fields: [customerId], references: [id])
+  Refund         Refund[]
+  Return         Return[]
+}
+
+model PriceRule {
+  id        Int       @id @default(autoincrement())
+  name      String
+  type      String
+  target    String
+  discount  Float
+  minQty    Int       @default(1)
+  startAt   DateTime?
+  endAt     DateTime?
+  active    Boolean   @default(true)
+  priority  Int       @default(50)
+  createdAt DateTime  @default(now())
+}
+
+model Product {
+  id             Int              @id @default(autoincrement())
+  name           String
+  category       String
+  price          Float
+  wasPrice       Float?
+  onSale         Boolean          @default(false)
+  promo          String?
+  stock          Float            @default(0)
+  unit           String           @default("Piece")
+  image          String?
+  description    String?
+  enabled        Boolean          @default(true)
+  hidden         Boolean          @default(false)
+  featured       Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime
+  barcode        String?          @unique
+  InventoryBatch InventoryBatch[]
+  RecentlyViewed RecentlyViewed[]
+  Subscription   Subscription[]
+}
+
+model ProductQA {
+  id         Int       @id @default(autoincrement())
+  productId  Int
+  question   String
+  author     String
+  email      String
+  answer     String?
+  answeredBy String?
+  isStaff    Boolean   @default(false)
+  answered   Boolean   @default(false)
+  answeredAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model ProductVariant {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  name      String
+  attribute String
+  value     String
+  price     Float
+  stock     Int      @default(0)
+  sku       String   @default("")
+  image     String   @default("")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Promo {
+  id            Int      @id @default(autoincrement())
+  type          String
+  target        String
+  start         String
+  end           String
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  buyX          Int?
+  crossDiscount Int?
+  crossTarget   String?
+  payY          Int?
+}
+
+model RecentlyViewed {
+  id        Int      @id @default(autoincrement())
+  email     String
+  productId Int
+  viewedAt  DateTime @default(now())
+  Product   Product  @relation(fields: [productId], references: [id])
+
+  @@unique([email, productId])
+}
+
+model Refund {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  amount      Float
+  reason      String
+  type        String   @default("full")
+  status      String   @default("processed")
+  processedBy String   @default("admin")
+  createdAt   DateTime @default(now())
+  Order       Order    @relation(fields: [orderId], references: [id])
+}
+
+model Return {
+  id           Int      @id @default(autoincrement())
+  orderId      Int
+  productName  String
+  quantity     Float
+  reason       String
+  condition    String
+  refundAmount Float
+  restocked    Boolean
+  processedBy  String
+  createdAt    DateTime @default(now())
+  Order        Order    @relation(fields: [orderId], references: [id])
+}
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  orderId   Int?
+  rating    Int
+  title     String
+  body      String
+  author    String
+  email     String
+  approved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Subscription {
+  id           Int       @id @default(autoincrement())
+  email        String
+  productId    Int
+  qty          Int       @default(1)
+  frequency    String
+  address      String
+  phone        String
+  nextDelivery DateTime
+  active       Boolean   @default(true)
+  cancelledAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime
+  Product      Product   @relation(fields: [productId], references: [id])
+}
+
+model Supplier {
+  id           Int      @id @default(autoincrement())
+  name         String
+  contact      String   @default("")
+  email        String   @default("")
+  phone        String   @default("")
+  address      String   @default("")
+  leadTimeDays Int      @default(3)
+  notes        String   @default("")
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+}
+
+model SupportTicket {
+  id         Int      @id @default(autoincrement())
+  name       String
+  email      String
+  subject    String
+  message    String
+  orderId    Int?
+  status     String   @default("open")
+  priority   String   @default("medium")
+  assignedTo String?
+  resolution String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+}
+
+model WishlistItem {
+  id        Int      @id @default(autoincrement())
+  email     String
+  productId Int
+  createdAt DateTime @default(now())
+
+  @@unique([email, productId])
+}

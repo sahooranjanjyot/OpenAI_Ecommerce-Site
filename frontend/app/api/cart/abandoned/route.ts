@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Abandoned Cart Recovery (G-069, G-030)
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     }
 
     const { sessionId, email, items } = parsed.data;
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     await prisma.abandonedCart.upsert({
       where:  { sessionId },
@@ -52,7 +52,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const now       = new Date();
 
     // Find carts abandoned > 1h, < 72h, with email, not yet recovered

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -32,7 +32,7 @@ export async function GET(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const rules = await (prisma as any).priceRule.findMany({ orderBy: [{ priority: "desc" }, { createdAt: "desc" }] });
     return NextResponse.json(rules);
   } catch {
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
       const { productId, customerTier, qty, couponCode } = parsed.data;
-      const { prisma } = await import("../../../lib/prisma");
+      const { prisma } = await import("@/lib/prisma");
 
       const product = await prisma.product.findUnique({ where: { id: productId } });
       if (!product) return NextResponse.json({ error: "Product not found." }, { status: 404 });
@@ -114,7 +114,7 @@ export async function POST(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const parsed = PriceRuleSchema.safeParse(body);
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
     const rule = await (prisma as any).priceRule.create({ data: parsed.data });

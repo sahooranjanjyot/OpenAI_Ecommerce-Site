@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
-import { cache } from "../../../lib/cache";
+import { cache } from "@/lib/cache";
 
 /**
  * Layaway / Instalment Payment Plan (G-123)
@@ -24,7 +24,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const email   = searchParams.get("email");
     const authErr = requireAdmin(req);
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const where = !authErr ? {} : email ? { email } : {};
     const plans = await (prisma as any).layaway.findMany({ where, orderBy: { createdAt: "desc" } });
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
     const { email, productId, qty, instalments, depositPct, address, phone } = parsed.data;
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const product = await prisma.product.findUnique({ where: { id: productId } });
     if (!product) return NextResponse.json({ error: "Product not found." }, { status: 404 });
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
 export async function PUT(req: Request) {
   try {
     const { id, amountPaid, paymentRef } = await req.json();
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const plan = await (prisma as any).layaway.findUnique({ where: { id } });
     if (!plan) return NextResponse.json({ error: "Layaway plan not found." }, { status: 404 });

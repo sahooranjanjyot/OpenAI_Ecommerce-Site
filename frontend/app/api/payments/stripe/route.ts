@@ -10,8 +10,8 @@ import { z } from "zod";
 
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "", {
-  apiVersion: "2024-12-18.acacia",
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "sk_test_dummy", {
+  apiVersion: "2026-03-25.dahlia",
 });
 
 export async function POST(req: Request) {
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature." }, { status: 400 });
   }
 
-  const { prisma } = await import("../../../lib/prisma");
+  const { prisma } = await import("@/lib/prisma");
 
   try {
     switch (event.type) {
@@ -49,21 +49,21 @@ export async function POST(req: Request) {
         if (orderId) {
           await prisma.order.update({ where: { id: orderId }, data: { status: "cancelled" } });
           // Restore stock
-          let items: any[] = [];
           try {
-            const order = await prisma.order.findUnique({ where: { id: orderId } });
-            const itemsRaw = order?.items as string ?? "[]";
-            try {
-              items = JSON.parse(itemsRaw);
-            } catch (parseErr: any) {
-              console.warn(`[Stripe] Order #${orderId} has malformed items JSON, skipping stock restoration: ${parseErr.message}`);
-              items = [];
+            const order = await prisma.order.findUnique({
+              where: { id: orderId },
+              include: { items: true },
+            });
+            if (order && order.items) {
+              for (const item of order.items) {
+                await prisma.product.update({
+                  where: { id: item.productId },
+                  data: { stock: { increment: item.quantity } },
+                });
+              }
             }
           } catch (dbErr: any) {
             console.warn(`[Stripe] Failed to fetch order #${orderId} for stock restoration: ${dbErr.message}`);
-          }
-          for (const item of items) {
-            await prisma.product.update({ where: { id: item.id }, data: { stock: { increment: item.qty } } });
           }
           console.warn(`[Stripe] Order #${orderId} payment failed — stock restored`);
         }

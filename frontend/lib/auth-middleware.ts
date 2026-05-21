@@ -115,3 +115,106 @@ export async function getSession(req: Request): Promise<SessionPayload | null> {
     return null;
   }
 }
+
+/**
+ * Synchronous JWT verification helper.
+ * Uses native crypto module to verify HS256 JWT signature in constant time.
+ */
+function verifyHS256Sync(token: string, secret: string): any | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [headerB64, payloadB64, signatureB64] = parts;
+
+    // Recalculate signature using HMAC-SHA256
+    const { createHmac } = require("crypto");
+    const hmac = createHmac("sha256", secret);
+    hmac.update(`${headerB64}.${payloadB64}`);
+    const expectedSignatureB64 = hmac.digest("base64url");
+
+    // Constant-time signature comparison to prevent timing attacks
+    if (!safeTokenCompare(signatureB64, expectedSignatureB64)) {
+      return null;
+    }
+
+    // Decode and parse payload
+    const payloadStr = Buffer.from(payloadB64, "base64url").toString("utf8");
+    const payload = JSON.parse(payloadStr);
+
+    // Validate expiration
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * requireAuth - Guard endpoint and retrieve authenticated user synchronously or asynchronously.
+ * Returns an object with user details if authenticated, or NextResponse (401 Unauthorized) if not.
+ * Supports flat destructuring (e.g. auth.email) and nested user (e.g. auth.user.email) usages.
+ */
+export function requireAuth(req: Request): any {
+  const authHeader = req.headers.get("authorization") ?? "";
+  let token = "";
+  if (authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice(7).trim();
+  } else {
+    const cookie = req.headers.get("cookie") ?? "";
+    const match = cookie.match(/(?:^|;\s*)token=([^;]+)/);
+    if (match) token = match[1];
+  }
+
+  if (!token) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const payload = verifyHS256Sync(token, JWT_SECRET ?? "");
+  if (!payload || !payload.sub || !payload.email) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
+  const userObj = {
+    id: String(payload.sub),
+    email: String(payload.email),
+    customerId: Number(payload.customerId ?? 0),
+    b2bAccountId: payload.b2bAccountId ? Number(payload.b2bAccountId) : undefined,
+  };
+
+  return {
+    ...userObj,
+    user: userObj,
+  };
+}
+
+/**
+ * getAuthUser - Asynchronously retrieves the authenticated user's profile.
+ * Returns the user profile object or null if unauthenticated.
+ */
+export async function getAuthUser(req: Request): Promise<any | null> {
+  const authHeader = req.headers.get("authorization") ?? "";
+  let token = "";
+  if (authHeader.startsWith("Bearer ")) {
+    token = authHeader.slice(7).trim();
+  } else {
+    const cookie = req.headers.get("cookie") ?? "";
+    const match = cookie.match(/(?:^|;\s*)token=([^;]+)/);
+    if (match) token = match[1];
+  }
+
+  if (!token) return null;
+
+  const payload = verifyHS256Sync(token, JWT_SECRET ?? "");
+  if (!payload || !payload.sub || !payload.email) return null;
+
+  return {
+    id: String(payload.sub),
+    email: String(payload.email),
+    customerId: Number(payload.customerId ?? 0),
+    b2bAccountId: payload.b2bAccountId ? Number(payload.b2bAccountId) : undefined,
+  };
+}
+

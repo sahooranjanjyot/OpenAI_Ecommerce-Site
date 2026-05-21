@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { randomBytes, createHmac, timingSafeEqual } from "crypto";
 import { z } from "zod";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
-import { cache } from "../../../lib/cache";
+import { cache } from "@/lib/cache";
 
 /**
  * MFA — TOTP (RFC 6238) + Backup Codes (G-101)

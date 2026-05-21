@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 /**
  * GraphQL API (G-240)
@@ -29,7 +29,7 @@ function getQueryDepth(query: string): number {
 
 const GraphQLSchema = z.object({
   query:         z.string().max(MAX_QUERY_LENGTH, `Query must be ≤${MAX_QUERY_LENGTH} chars`),
-  variables:     z.record(z.unknown()).optional(),
+  variables:     z.record(z.string(), z.unknown()).optional(),
   operationName: z.string().optional(),
 });
 
@@ -51,8 +51,8 @@ async function resolveOrders(args: any) {
 function parseSimpleGQL(query: string, variables: Record<string, any> = {}) {
   // Minimal parser — extract operation type and root field
   const trimmed    = query.trim();
-  const queryMatch = trimmed.match(/^query\s+\w*\s*(?:\(.*?\))?\s*\{(.+)\}/s);
-  const mutMatch   = trimmed.match(/^mutation\s+\w*\s*(?:\(.*?\))?\s*\{(.+)\}/s);
+  const queryMatch = trimmed.match(/^query\s+\w*\s*(?:\(.*?\))?\s*\{([\s\S]+)\}/);
+  const mutMatch   = trimmed.match(/^mutation\s+\w*\s*(?:\(.*?\))?\s*\{([\s\S]+)\}/);
   if (!queryMatch && !mutMatch) return null;
   return { isQuery: !!queryMatch, body: (queryMatch || mutMatch)![1].trim() };
 }

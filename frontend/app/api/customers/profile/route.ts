@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin, getSession } from "../../../lib/auth-middleware";
+import { requireAdmin, getSession } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -35,7 +35,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // Find customer
     const customer = email

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { getSession } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -48,8 +48,8 @@ export async function GET(req: Request) {
     // Collect all personal data (Article 15 — Right of Access)
     const [orders, reviews, wishlists, loyaltyAccount, newsletterSub, abandonedCarts] = await Promise.all([
       prisma.order.findMany({ where: { customerId: customer.id }, include: { items: true } }),
-      prisma.review.findMany({ where: { customerId: customer.id } }),
-      prisma.wishlist.findMany({ where: { customerId: customer.id } }),
+      prisma.review.findMany({ where: { email } }),
+      prisma.wishlistItem.findMany({ where: { email } }),
       (prisma as any).loyaltyAccount.findUnique({ where: { email } }),
       (prisma as any).newsletterSubscriber.findUnique({ where: { email } }),
       (prisma as any).abandonedCart.findMany({ where: { email } }),
@@ -112,14 +112,14 @@ export async function DELETE(req: Request) {
         data: {
           email:        `deleted-${customer.id}@anon.groceryos.internal`,
           name:         "Deleted User",
-          phone:        null,
+          phone:        `deleted-${customer.id}`,
           address:      "",
           passwordHash: null,
           sessionToken: null,
         },
       });
-      await tx.review.deleteMany({ where: { customerId: customer.id } });
-      await tx.wishlist.deleteMany({ where: { customerId: customer.id } });
+      await tx.review.deleteMany({ where: { email: customer.email ?? "" } });
+      await tx.wishlistItem.deleteMany({ where: { email: customer.email ?? "" } });
       await (tx as any).loyaltyAccount.deleteMany({ where: { email } });
       await (tx as any).newsletterSubscriber.deleteMany({ where: { email } });
       await (tx as any).abandonedCart.deleteMany({ where: { email } });

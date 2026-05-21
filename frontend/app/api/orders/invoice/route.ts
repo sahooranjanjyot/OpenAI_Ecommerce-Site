@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../lib/prisma";
-import { requireAdmin } from "../../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * GET /api/orders/invoice?orderId=X&phone=Y
@@ -18,7 +18,10 @@ export async function GET(req: Request) {
 
     const order = await prisma.order.findUnique({
       where:   { id: orderId },
-      include: { customer: true },
+      include: {
+        customer: true,
+        items: { include: { product: true } },
+      },
     });
     if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
 
@@ -30,11 +33,15 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Phone verification required." }, { status: 401 });
     }
 
-    let items: Array<{ name: string; price: number; qty: number }> = [];
-    try { items = JSON.parse(order.items as string); } catch {}
+    const items = (order.items ?? []).map(item => ({
+      name:  item.product?.name ?? `Product #${item.productId}`,
+      price: item.price / 100,
+      qty:   item.quantity,
+    }));
 
-    const subtotalExVAT = parseFloat((order.total / 1.2).toFixed(2));
-    const vatAmount     = parseFloat((order.total - subtotalExVAT).toFixed(2));
+    const totalPounds   = order.total / 100;
+    const subtotalExVAT = parseFloat((totalPounds / 1.2).toFixed(2));
+    const vatAmount     = parseFloat((totalPounds - subtotalExVAT).toFixed(2));
     const date          = new Date(order.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
     const html = `<!DOCTYPE html>
@@ -96,7 +103,7 @@ export async function GET(req: Request) {
     </div>
     <div class="address-block">
       <h3>Delivery Address</h3>
-      <p>${(order.address ?? "").split(",").join("<br>")}</p>
+      <p>${(order.shippingAddr ?? "").split(",").join("<br>")}</p>
     </div>
     <div class="address-block">
       <h3>Payment</h3>
@@ -128,8 +135,8 @@ export async function GET(req: Request) {
   <div class="totals">
     <div class="total-row"><span>Subtotal (ex. VAT)</span><span>£${subtotalExVAT.toFixed(2)}</span></div>
     <div class="total-row"><span>VAT (20%)</span><span>£${vatAmount.toFixed(2)}</span></div>
-    <div class="total-row"><span>Shipping</span><span>${order.total >= 30 ? "FREE" : "£3.99"}</span></div>
-    <div class="total-row grand"><span>TOTAL</span><span>£${order.total.toFixed(2)}</span></div>
+    <div class="total-row"><span>Shipping</span><span>${totalPounds >= 30 ? "FREE" : "£3.99"}</span></div>
+    <div class="total-row grand"><span>TOTAL</span><span>£${totalPounds.toFixed(2)}</span></div>
   </div>
 
   <div class="footer">

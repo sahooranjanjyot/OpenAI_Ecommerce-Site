@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
-import { cache } from "../../../lib/cache";
+import { cache } from "@/lib/cache";
 
 /**
  * Frontend Error Reporting (G-020, G-079)

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
 
 /**
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     }
 
     const { email, name, preferences, source } = parsed.data;
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const existing = await (prisma as any).newsletterSubscription.findUnique({ where: { email } });
     if (existing?.subscribed) {
@@ -136,7 +136,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "token required." }, { status: 400 });
     }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     await (prisma as any).newsletterSubscription.update({
       where: { email },
       data:  { subscribed: false, unsubscribedAt: new Date() },
@@ -163,7 +163,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     await (prisma as any).newsletterSubscription.update({
       where: { email },
       data:  { subscribed: false, unsubscribedAt: new Date() },

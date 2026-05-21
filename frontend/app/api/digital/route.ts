@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid token format." }, { status: 400 });
     }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const link = await (prisma as any).digitalDownload.findUnique({ where: { token } });
 
     if (!link)                               return NextResponse.json({ error: "Invalid download link." }, { status: 404 });
@@ -118,7 +118,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const { prisma }     = await import("../../../lib/prisma");
+    const { prisma }     = await import("@/lib/prisma");
     const { randomBytes } = await import("crypto");
     const token           = randomBytes(32).toString("hex"); // 64-char hex
     const expiresAt       = new Date(Date.now() + parsed.data.expiresHours * 60 * 60 * 1000);

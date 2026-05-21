@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -27,7 +27,7 @@ const TrackSchema = z.object({
 });
 
 export async function GET(req: Request) {
-  const { prisma: db } = await import("../../../lib/prisma");
+  const { prisma: db } = await import("@/lib/prisma");
   const authErr = requireAdmin(req);
 
   if (authErr) {
@@ -56,7 +56,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { prisma: db } = await import("../../../lib/prisma");
+  const { prisma: db } = await import("@/lib/prisma");
   const { randomBytes } = await import("crypto");
 
   const authErr = requireAdmin(req);

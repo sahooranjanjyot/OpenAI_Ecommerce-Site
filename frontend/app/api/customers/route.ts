@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export async function GET(req: Request) {
     ]);
 
     // Strip sensitive fields
-    const safe = data.map(({ password: _pw, passwordHash: _ph, ...c }: any) => c);
+    const safe = data.map(({ passwordHash: _ph, ...c }: any) => c);
     return NextResponse.json({ customers: safe, total, page, pages: Math.ceil(total / limit) });
   } catch {
     return NextResponse.json({ error: "Failed to fetch customers." }, { status: 500 });
@@ -77,7 +77,7 @@ export async function PUT(req: Request) {
     }
 
     const updated = await prisma.customer.update({ where: { id }, data });
-    const { password: _pw, ...safe } = updated;
+    const { passwordHash: _ph, ...safe } = updated;
     return NextResponse.json(safe);
   } catch {
     return NextResponse.json({ error: "Failed to update customer." }, { status: 500 });
@@ -101,13 +101,13 @@ export async function DELETE(req: Request) {
     await prisma.customer.update({
       where: { id },
       data: {
-        name:     "[Deleted]",
-        email:    `deleted_${id}@erased.local`,
-        phone:    `deleted_${id}`,
-        address:  "",
-        notes:    "",
-        password: "",
-        blocked:  false,
+        name:          "[Deleted]",
+        email:         `deleted_${id}@erased.local`,
+        phone:         `deleted_${id}`,
+        address:       "",
+        notes:         "",
+        passwordHash:  null,
+        blocked:       false,
       },
     });
 

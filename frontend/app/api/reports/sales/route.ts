@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * GET /api/reports/sales
@@ -26,16 +26,20 @@ export async function GET(req: Request) {
     // Fetch orders
     const orders = await prisma.order.findMany({
       where:   { ...(from || to ? { createdAt: dateFilter } : {}) },
-      include: { customer: { select: { name: true } } },
+      include: {
+        customer: { select: { name: true } },
+        items: { include: { product: { select: { name: true } } } },
+      },
       orderBy: { createdAt: "asc" },
     });
 
-    // Revenue summary
-    const totalRevenue    = orders.reduce((s, o) => s + o.total, 0);
-    const vatCollected    = parseFloat((totalRevenue - totalRevenue / 1.2).toFixed(2));
-    const revenueExVAT    = parseFloat((totalRevenue / 1.2).toFixed(2));
-    const ordersCount     = orders.length;
-    const avgOrderValue   = ordersCount > 0 ? parseFloat((totalRevenue / ordersCount).toFixed(2)) : 0;
+    // Revenue summary (prices in DB are in pence, convert to pounds)
+    const totalRevenuePence = orders.reduce((s, o) => s + o.total, 0);
+    const totalRevenue      = totalRevenuePence / 100;
+    const vatCollected      = parseFloat((totalRevenue - totalRevenue / 1.2).toFixed(2));
+    const revenueExVAT      = parseFloat((totalRevenue / 1.2).toFixed(2));
+    const ordersCount       = orders.length;
+    const avgOrderValue     = ordersCount > 0 ? parseFloat((totalRevenue / ordersCount).toFixed(2)) : 0;
 
     // Orders by status
     const byStatus: Record<string, { count: number; revenue: number }> = {};
@@ -43,7 +47,7 @@ export async function GET(req: Request) {
       const s = order.status ?? "unknown";
       if (!byStatus[s]) byStatus[s] = { count: 0, revenue: 0 };
       byStatus[s].count++;
-      byStatus[s].revenue = parseFloat((byStatus[s].revenue + order.total).toFixed(2));
+      byStatus[s].revenue = parseFloat((byStatus[s].revenue + order.total / 100).toFixed(2));
     }
 
     // Daily revenue buckets
@@ -52,22 +56,21 @@ export async function GET(req: Request) {
       const day = order.createdAt.toISOString().split("T")[0];
       if (!byDay[day]) byDay[day] = { orders: 0, revenue: 0 };
       byDay[day].orders++;
-      byDay[day].revenue = parseFloat((byDay[day].revenue + order.total).toFixed(2));
+      byDay[day].revenue = parseFloat((byDay[day].revenue + order.total / 100).toFixed(2));
     }
 
-    // Top products by revenue (parse items JSON)
+    // Top products by revenue
     const productRevenue: Record<string, { name: string; qty: number; revenue: number }> = {};
     for (const order of orders) {
-      try {
-        const items: Array<{ id: number; name: string; price: number; qty: number }> =
-          JSON.parse(order.items as string);
-        for (const item of items) {
-          const key = item.id?.toString() ?? item.name;
-          if (!productRevenue[key]) productRevenue[key] = { name: item.name, qty: 0, revenue: 0 };
-          productRevenue[key].qty     += item.qty;
-          productRevenue[key].revenue  = parseFloat((productRevenue[key].revenue + item.price * item.qty).toFixed(2));
+      if (order.items) {
+        for (const item of order.items) {
+          const key = item.productId.toString();
+          const pName = item.product?.name ?? `Product #${item.productId}`;
+          if (!productRevenue[key]) productRevenue[key] = { name: pName, qty: 0, revenue: 0 };
+          productRevenue[key].qty     += item.quantity;
+          productRevenue[key].revenue  = parseFloat((productRevenue[key].revenue + (item.price / 100) * item.quantity).toFixed(2));
         }
-      } catch { /* skip malformed order items */ }
+      }
     }
 
     const topProducts = Object.values(productRevenue)

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../lib/prisma";
-import { requireAdmin } from "../../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 // ── GET /api/products/export — CSV download (G-055) ──────────────────────────

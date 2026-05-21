@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
 
 // ── Abandoned Cart Persistence (G-030, G-069) ─────────────────────────────────
@@ -24,8 +24,8 @@ export async function GET(req: Request) {
                req.headers.get("x-real-ip") || 
                "unknown";
     const rateLimitKey = `cart:get:${ip}`;
-    const { limited } = await cache.rateLimit(rateLimitKey, 60, 60);
-    if (limited) {
+    const { allowed } = await cache.rateLimit(rateLimitKey, 60, 60);
+    if (!allowed) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 

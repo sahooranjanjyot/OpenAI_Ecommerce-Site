@@ -8,7 +8,7 @@
  */
 import { NextResponse } from "next/server";
 import { randomBytes, createHmac, timingSafeEqual } from "crypto";
-import { cache } from "../../../lib/cache";
+import { cache } from "@/lib/cache";
 
 const CSRF_HMAC_SECRET = (() => {
   const s = process.env.CSRF_SECRET ?? process.env.JWT_SECRET;

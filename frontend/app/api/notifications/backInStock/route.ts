@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin, requireAuth } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin, requireAuth } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
 
 // ── Back-in-Stock Notifications (G-058, G-062, G-071) ────────────────────────
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for");
   const ip = forwarded?.split(",")[0]?.trim() || "unknown";
   const rateLimitKey = `backInStock:subscribe:${ip}`;
-  const { success: rateLimitOk } = await cache.rateLimit(rateLimitKey, 10, 3600);
+  const { allowed: rateLimitOk } = await cache.rateLimit(rateLimitKey, 10, 3600);
   if (!rateLimitOk) {
     return NextResponse.json({ error: "Too many subscription requests. Please try again later." }, { status: 429 });
   }

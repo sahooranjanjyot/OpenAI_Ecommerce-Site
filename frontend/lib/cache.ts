@@ -190,7 +190,7 @@ export const cache = {
   // ── Cached query wrapper ──────────────────────────────────────────────────
   async cached<T>(key: string, fetcher: () => Promise<T>, options?: CacheOptions): Promise<T> {
     const fullKey = `${options?.prefix ?? ""}${key}`;
-    const cached  = await this.get<T>(fullKey);
+    const cached  = await cache.get<T>(fullKey);
     if (cached !== null) return cached;
     const value = await fetcher();
     await this.set(fullKey, value, options?.ttl ?? 300);

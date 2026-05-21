@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 import { z } from "zod";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 /**
  * Gift Cards (G-170)
@@ -21,7 +21,7 @@ import { logger } from "../../../lib/logger";
  *   WHERE balance >= amount to prevent double-spend.
  */
 
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 function generateGiftCardCode(): string {
   const { randomBytes } = require("crypto");

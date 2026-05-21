@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 /**
  * Barcode / QR Code Scanner (G-117, G-118)
@@ -50,7 +50,7 @@ export async function GET(req: Request) {
     const { allowed } = await cache.rateLimit(`barcode:${ip}`, 60, 60);
     if (!allowed) return NextResponse.json({ error: "Rate limit exceeded." }, { status: 429 });
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     if (action === "lookup") {
       const product = await prisma.product.findFirst({
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
     }
     const { productId, barcode } = parsed.data;
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     const existing = await prisma.product.findFirst({ where: { barcode } });
     if (existing && existing.id !== productId) {
@@ -123,7 +123,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const results: Array<{ productId: number; barcode: string; ok: boolean; error?: string }> = [];
 
     // FIX LOW: Wrap in transaction — all-or-nothing batch update

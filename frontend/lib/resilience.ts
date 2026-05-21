@@ -45,7 +45,7 @@ export class CircuitBreaker {
       return result;
     } catch (err) {
       this.onFailure();
-      if (fallback && this.state === "OPEN") return fallback();
+      if (fallback && (this.state as string) === "OPEN") return fallback();
       throw err;
     }
   }

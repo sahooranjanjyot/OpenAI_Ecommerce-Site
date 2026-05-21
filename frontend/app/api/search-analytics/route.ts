@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Search Analytics (G-115) — track searches, zero-result queries, popular terms
@@ -38,7 +38,7 @@ export async function GET(req: Request) {
   if (type === "fraud") {
     if (authErr) return authErr;
     // Fraud detection report
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const orders = await prisma.order.findMany({
       where:   { status: { not: "cancelled" }, total: { gt: 100 } },
       include: { customer: { select: { email: true, createdAt: true } } },

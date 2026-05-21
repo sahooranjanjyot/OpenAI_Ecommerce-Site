@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Split Payment (G-120) — divide order payment across multiple methods
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
     const { orderId, total, payments, customerId } = parsed.data;
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // Validate total matches sum of payment amounts
     const paymentSum = payments.reduce((s, p) => s + p.amount, 0);

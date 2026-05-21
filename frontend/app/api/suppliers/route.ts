@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
-import { logger } from "../../../lib/logger";
+import { logger } from "@/lib/logger";
 
 /**
  * Supplier Management (G-060, G-040, G-044)

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
-import { prisma } from "../../../lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/metrics — Prometheus-compatible metrics (G-118)

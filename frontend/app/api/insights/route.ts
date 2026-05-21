@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * Sentiment Analysis (G-230) — NLP analysis of reviews/tickets
@@ -13,7 +13,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") ?? "sentiment";
-  const { prisma } = await import("../../../lib/prisma");
+  const { prisma } = await import("@/lib/prisma");
 
   // ── Sentiment Analysis (G-230) ─────────────────────────────────────────────
   if (type === "sentiment") {

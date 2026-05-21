@@ -90,6 +90,12 @@ export default function GroceryUATReadyApp() {
   const [adminPass, setAdminPass] = useState("");
   const [adminOtp, setAdminOtp] = useState("");
   const [adminOtpSent, setAdminOtpSent] = useState(false);
+  const [adminMfaRequired, setAdminMfaRequired] = useState(false);
+  const [adminMfaToken, setAdminMfaToken] = useState("");
+  const [adminTotpCode, setAdminTotpCode] = useState("");
+  const [customerToken, setCustomerToken] = useState<string | null>(null);
+  const [idleWarning, setIdleWarning] = useState(false);
+  const lastActivityRef = React.useRef<number>(Date.now());
   const [savedAddresses, setSavedAddresses] = useState<Record<string, string[]>>({});
   const [savedInstructions, setSavedInstructions] = useState<Record<string, string[]>>({});
   const [orderHistory, setOrderHistory] = useState<Record<string, { total: number; items: string; address: string, date?: string }[]>>({});
@@ -102,9 +108,9 @@ export default function GroceryUATReadyApp() {
   const [paymentOtp, setPaymentOtp] = useState("");
   const [emailVerificationSent, setEmailVerificationSent] = useState(false);
   const [checkoutEmail, setCheckoutEmail] = useState("");
-  const [adminProducts, setAdminProducts] = useState<any[]>(productsSeed as any[]);
+  const [adminProducts, setAdminProducts] = useState<any[]>([]);
   const [adminEmployees, setAdminEmployees] = useState<any[]>([]);
-  const products = adminProducts.filter(p => !p.hidden && p.enabled !== false);
+  const products = Array.isArray(adminProducts) ? adminProducts.filter(p => !p.hidden && p.enabled !== false) : [];
   const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
   const [editForm, setEditForm] = useState<any>({});
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -114,6 +120,17 @@ export default function GroceryUATReadyApp() {
   const [storeAlert, setStoreAlert] = useState({ active: false, message: "Welcome to Grocery OS! Fresh deals daily." });
   const [loyaltyDiscountSetting, setLoyaltyDiscountSetting] = useState(10);
 
+  // ── Currency Switcher (G-052) ────────────────────────────────────────────────
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("GBP");
+  const [exchangeRates, setExchangeRates] = useState<Record<string, { rate: number; symbol: string; name: string }>>({});
+  const currencySymbol = exchangeRates[selectedCurrency]?.symbol ?? "£";
+  const formatPrice = (pricePennies: number) => {
+    const pounds = pricePennies / 100;
+    const rate   = exchangeRates[selectedCurrency]?.rate ?? 1;
+    const converted = (pounds * rate).toFixed(2);
+    return `${currencySymbol}${converted}`;
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem("groceryGlobalPromo");
     if (saved) setGlobalPromo(JSON.parse(saved));
@@ -121,6 +138,38 @@ export default function GroceryUATReadyApp() {
     if (savedAlert) setStoreAlert(JSON.parse(savedAlert));
     const savedLoyalty = localStorage.getItem("groceryLoyaltyDiscount");
     if (savedLoyalty) setLoyaltyDiscountSetting(parseFloat(savedLoyalty) || 10);
+  }, []);
+
+  // ── 15-Minute Idle Session Timeout (G-013, PCI-DSS) ─────────────────────────
+  useEffect(() => {
+    const IDLE_LIMIT = 15 * 60 * 1000; // 15 minutes
+    const WARNING_AT = 14 * 60 * 1000; // warn at 14 minutes
+
+    const resetActivity = () => { lastActivityRef.current = Date.now(); setIdleWarning(false); };
+    const events = ["mousemove", "keydown", "click", "touchstart", "scroll"];
+    events.forEach(e => window.addEventListener(e, resetActivity, { passive: true }));
+
+    const idleCheck = setInterval(() => {
+      const idle = Date.now() - lastActivityRef.current;
+      if (idle >= IDLE_LIMIT) {
+        // Session expired — log out customer
+        setBuyer(null);
+        setCustomerToken(null);
+        localStorage.removeItem("groceryos_buyer");
+        localStorage.removeItem("groceryos_token");
+        (window as any).__customerToken = null;
+        setIdleWarning(false);
+        setMessage("Your session expired after 15 minutes of inactivity. Please log in again.");
+        setRoute("buyer");
+      } else if (idle >= WARNING_AT) {
+        setIdleWarning(true);
+      }
+    }, 30_000); // check every 30s
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetActivity));
+      clearInterval(idleCheck);
+    };
   }, []);
 
   useEffect(() => {
@@ -241,7 +290,7 @@ export default function GroceryUATReadyApp() {
             setTimeout(() => setSyncStatus(""), 4000);
             
             // Refresh products organically from admin boundary
-            fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+            fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
          }
       } else {
          setSyncStatus("Sync failed. Retrying later...");
@@ -308,16 +357,47 @@ export default function GroceryUATReadyApp() {
     };
   }, [scanningPos]);
 
-  const [mounted, setMounted] = useState(true);
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
-    // Mount immediately with seed data so UI renders without a database
-    setAdminProducts(productsSeed as any[]);
+    // Load seed data immediately so products show without DB
+    setAdminProducts([...productsSeed] as any[]);
     setMounted(true);
+
+    // ── CSRF + Auth: auto-attach to all requests ─────────────────────────────
+    fetch("/api/csrf")
+      .then(r => r.json())
+      .then(({ csrfToken }) => {
+        if (!csrfToken) return;
+        const _origFetch = window.fetch.bind(window);
+        (window as any).__csrfToken = csrfToken;
+        window.fetch = function (input: RequestInfo | URL, init: RequestInit = {}) {
+          const method = (init.method || "GET").toUpperCase();
+          const token = (window as any).__customerToken;
+          const extraHeaders: Record<string, string> = {};
+          if (["POST", "PUT", "DELETE", "PATCH"].includes(method)) {
+            extraHeaders["x-csrf-token"] = (window as any).__csrfToken || "";
+          }
+          // Attach customer JWT to all /api/ calls (read and write)
+          if (token && typeof input === "string" && input.startsWith("/api/")) {
+            extraHeaders["Authorization"] = `Bearer ${token}`;
+          }
+          if (Object.keys(extraHeaders).length > 0) {
+            init.headers = { ...(init.headers || {}), ...extraHeaders };
+          }
+          return _origFetch(input, init);
+        };
+      })
+      .catch(() => { /* non-fatal */ });
 
     if (typeof window !== "undefined") {
       try {
         const storedBuyer = localStorage.getItem("groceryos_buyer");
         if (storedBuyer) setBuyer(JSON.parse(storedBuyer));
+        const storedToken = localStorage.getItem("groceryos_token");
+        if (storedToken) {
+          setCustomerToken(storedToken);
+          (window as any).__customerToken = storedToken;
+        }
       } catch (e) { }
 
       const checkHash = () => {
@@ -327,6 +407,15 @@ export default function GroceryUATReadyApp() {
       window.addEventListener("hashchange", checkHash);
 
       // Then attempt to load live data from the API (replaces seed data if DB is available)
+      // Also fetch currency rates for the switcher (G-052)
+      fetch("/api/currency").then(r => r.ok ? r.json() : null).then(data => {
+        if (data?.currencies) {
+          const rates: Record<string, { rate: number; symbol: string; name: string }> = {};
+          data.currencies.forEach((c: any) => { rates[c.code] = { rate: c.rate, symbol: c.symbol, name: c.name }; });
+          setExchangeRates(rates);
+        }
+      }).catch(() => {});
+
       Promise.all([
         fetch("/api/products").then(r => r.ok ? r.json() : null),
         fetch("/api/orders").then(r => r.ok ? r.json() : null),
@@ -336,13 +425,19 @@ export default function GroceryUATReadyApp() {
         fetch("/api/returns").then(r => r.ok ? r.json() : null),
         fetch("/api/employees").then(r => r.ok ? r.json() : null),
       ]).then(([productsData, ordersData, customersData, promosData, inventoryData, returnsData, employeesData]) => {
-        if (productsData) setAdminProducts(productsData);
-        if (ordersData) setAdminOrders(ordersData);
-        if (customersData) setAdminCustomers(customersData);
-        if (promosData) setPromos(promosData);
-        if (inventoryData) setInventoryBatches(inventoryData);
-        if (returnsData) setAdminReturns(returnsData);
-        if (employeesData) setAdminEmployees(employeesData);
+        // Only replace seed data if DB actually has products (empty array = DB not seeded yet)
+        if (productsData && Array.isArray(productsData) && productsData.length > 0) setAdminProducts(productsData);
+        const ordersList = Array.isArray(ordersData) ? ordersData : (ordersData?.orders ?? []);
+        if (ordersList.length > 0 || ordersData) setAdminOrders(ordersList);
+        const customersList = Array.isArray(customersData) ? customersData : (customersData?.customers ?? customersData?.data ?? []);
+        if (customersList) setAdminCustomers(customersList);
+        if (promosData) setPromos(Array.isArray(promosData) ? promosData : (promosData?.promos ?? promosData?.data ?? []));
+        const inventoryList = Array.isArray(inventoryData) ? inventoryData : (inventoryData?.batches ?? inventoryData?.data ?? []);
+        if (inventoryList) setInventoryBatches(inventoryList);
+        const returnsList = Array.isArray(returnsData) ? returnsData : (returnsData?.data ?? []);
+        if (returnsList) setAdminReturns(returnsList);
+        const employeesList = Array.isArray(employeesData) ? employeesData : (employeesData?.employees ?? employeesData?.data ?? []);
+        if (employeesList) setAdminEmployees(employeesList);
 
         const parsedAddrs: Record<string, string[]> = {};
         const parsedOrders: Record<string, any[]> = {};
@@ -609,6 +704,13 @@ export default function GroceryUATReadyApp() {
         notes: data.customer.notes
       };
 
+      // Store JWT token for authenticated API calls (G-002)
+      if (data.token) {
+        setCustomerToken(data.token);
+        localStorage.setItem("groceryos_token", data.token);
+        (window as any).__customerToken = data.token;
+      }
+
       setBuyer(newBuyer);
       localStorage.setItem("groceryos_buyer", JSON.stringify(newBuyer));
       setRoute("store");
@@ -661,6 +763,18 @@ export default function GroceryUATReadyApp() {
           {storeAlert.message}
         </div>
       )}
+      {/* ── Idle Session Warning Banner (G-013, PCI-DSS) ── */}
+      {idleWarning && buyer && (
+        <div style={{ background: "#dc2626", color: "white", textAlign: "center", padding: "8px 16px", fontWeight: "bold", zIndex: 10000, position: "fixed", top: storeAlert.active && route !== "admin" ? 30 : 0, left: 0, right: 0, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          ⚠️ Your session will expire in under 1 minute due to inactivity.
+          <button
+            onClick={() => { lastActivityRef.current = Date.now(); setIdleWarning(false); }}
+            style={{ background: "white", color: "#dc2626", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontWeight: "bold", fontSize: 12 }}
+          >
+            Stay Logged In
+          </button>
+        </div>
+      )}
       <div
         style={{
           height: "100vh",
@@ -692,6 +806,8 @@ export default function GroceryUATReadyApp() {
 
         <aside style={{ padding: 20, borderRight: "1px solid #334155", overflowY: "auto", display: "flex", flexDirection: "column" }}>
           <h3>🛒 Grocery OS</h3>
+
+
 
           <Btn
             active={route === "store"}
@@ -764,7 +880,10 @@ export default function GroceryUATReadyApp() {
                     setMessage("Seller identity disconnected securely.");
                   } else {
                     setBuyer(null);
+                    setCustomerToken(null);
                     localStorage.removeItem("groceryos_buyer");
+                    localStorage.removeItem("groceryos_token");
+                    (window as any).__customerToken = null;
                     setMessage("Buyer profile signed out universally.");
                   }
                 }
@@ -1026,21 +1145,30 @@ export default function GroceryUATReadyApp() {
                       setMessage("Connecting to secure gateway...");
                       try {
                         if (!adminOtpSent) {
-                          const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "request_otp", username: adminUser, password: adminPass }) });
+                          const r = await fetch("/api/auth/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "request_otp", username: adminUser, password: adminPass }) });
                           if (!r.ok) throw new Error("Gateway failed HTTP " + r.status);
                           const d = await r.json();
                           if (d.error) return setMessage(d.error);
                           setAdminOtpSent(true);
                           setMessage(d.message);
                         } else {
-                          const r = await fetch("/api/auth/admin", { method: "POST", body: JSON.stringify({ action: "verify_otp", otp: adminOtp }) });
+                          const r = await fetch("/api/auth/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify_otp", otp: adminOtp }) });
                           if (!r.ok) throw new Error("Gateway failed HTTP " + r.status);
                           const d = await r.json();
                           if (d.error) return setMessage(d.error);
-                          setAdminLogged(true);
-                          setAdminOtpSent(false);
-                          setAdminOtp("");
-                          setMessage("Admin authenticated successfully!");
+
+                          if (d.requiresMfa) {
+                            // MFA configured — show TOTP step
+                            setAdminMfaRequired(true);
+                            setAdminMfaToken(d.mfaToken);
+                            setAdminOtp("");
+                            setMessage("OTP verified. Enter the 6-digit code from your authenticator app.");
+                          } else {
+                            setAdminLogged(true);
+                            setAdminOtpSent(false);
+                            setAdminOtp("");
+                            setMessage("Admin authenticated successfully!");
+                          }
                         }
                       } catch (err: any) {
                         setMessage("Console Crash: Connection or Server Error -> " + err.message);
@@ -1060,6 +1188,40 @@ export default function GroceryUATReadyApp() {
                     >
                       Forgot System Password?
                     </button>
+                  )}
+
+                  {/* ── MFA TOTP Step (G-076) ── */}
+                  {adminMfaRequired && (
+                    <div style={{ marginTop: 16, padding: 16, background: "rgba(59,130,246,0.1)", border: "1px solid #3b82f6", borderRadius: 10 }}>
+                      <p style={{ color: "#93c5fd", marginBottom: 12, fontWeight: "bold" }}>🔐 Step 3: Authenticator App</p>
+                      <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 12 }}>Enter the 6-digit code from your authenticator app (Google Authenticator, Authy, etc.)</p>
+                      <input
+                        value={adminTotpCode}
+                        onChange={e => setAdminTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        placeholder="000000"
+                        maxLength={6}
+                        style={{ display: "block", padding: 12, marginBottom: 12, width: 420, borderRadius: 10, background: "#1e293b", color: "#93c5fd", border: "1px solid #3b82f6", fontWeight: "bold", fontSize: 20, letterSpacing: 8, textAlign: "center" }}
+                      />
+                      <Btn
+                        label="Verify Authenticator Code"
+                        onClick={async () => {
+                          setMessage("Verifying authenticator code...");
+                          try {
+                            const r = await fetch("/api/auth/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "verify_mfa", mfaToken: adminMfaToken, totpCode: adminTotpCode }) });
+                            const d = await r.json();
+                            if (d.error) return setMessage(d.error);
+                            setAdminLogged(true);
+                            setAdminMfaRequired(false);
+                            setAdminMfaToken("");
+                            setAdminTotpCode("");
+                            setAdminOtpSent(false);
+                            setMessage("Admin authenticated successfully! (MFA verified)");
+                          } catch (err: any) {
+                            setMessage("MFA verification failed: " + err.message);
+                          }
+                        }}
+                      />
+                    </div>
                   )}
 
                   <div style={{ marginTop: 24, borderTop: "1px dashed #334155", paddingTop: 24 }}>
@@ -1140,8 +1302,8 @@ export default function GroceryUATReadyApp() {
                               }
                               setAdminTab(x);
                               if (x === "Orders" || x === "Analytics" || x === "Revenue & Ledger") {
-                                fetch("/api/orders").then(res => res.json()).then(setAdminOrders);
-                                fetch("/api/products").then(res => res.json()).then(setAdminProducts);
+                                fetch("/api/orders").then(res => res.json()).then(data => { const list = Array.isArray(data) ? data : (data?.orders ?? []); setAdminOrders(list); });
+                                fetch("/api/products").then(res => res.json()).then(data => { const list = Array.isArray(data) ? data : (data?.products ?? []); if (list.length > 0) setAdminProducts(list); });
                               }
                               if (x === "Staff") {
                                 fetch("/api/employees").then(res => res.json()).then(d => { if (Array.isArray(d)) setAdminEmployees(d); else if (d.error) window.alert(d.error); });
@@ -1168,9 +1330,9 @@ export default function GroceryUATReadyApp() {
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                 <h3 style={{ margin: 0 }}>Point of Sale Terminal</h3>
                                 {posSyncQueue.length > 0 && (
-                                   <div style={{ background: "#ef4444", color: "white", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", animation: "pulse 2s infinite" }}>
-                                      ⚠️ TERMINAL OFFLINE: {posSyncQueue.length} pending sync
-                                      {syncStatus && <span style={{ marginLeft: 6, fontWeight: "normal" }}>({syncStatus})</span>}
+                                   <div style={{ background: "#78350f", color: "#fbbf24", padding: "5px 12px", borderRadius: "6px", fontSize: "12px", border: "1px solid #d97706" }}>
+                                     🔄 {posSyncQueue.length} sale{posSyncQueue.length > 1 ? "s" : ""} pending server sync
+                                     {syncStatus && <span style={{ marginLeft: 6, opacity: 0.8 }}>({syncStatus})</span>}
                                    </div>
                                 )}
                             </div>
@@ -1238,7 +1400,9 @@ export default function GroceryUATReadyApp() {
                                   </div>
                                   {p.barcode && <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>|||| {p.barcode}</div>}
                                   <div style={{ color: "#38bdf8", fontSize: 12, marginBottom: 8 }}>£{p.price.toFixed(2)} / {p.unit}</div>
-                                  <div style={{ color: p.stock <= 0 ? "#ef4444" : p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>Stock: {p.stock} {p.unit}</div>
+                                  <div style={{ color: p.stock <= 0 ? "#ef4444" : p.stock < 5 ? "#fca5a5" : "#94a3b8", fontSize: 11, marginBottom: 10 }}>
+                                    {p.stock <= 0 ? "⚠️ Out of Stock" : `Stock: ${Math.max(0, p.stock)} ${p.unit}`}
+                                  </div>
 
                                   <div style={{ display: "flex", marginTop: "auto", gap: 4 }}>
                                     {p.unit === "Piece" || p.unit === "Pack" ? (
@@ -1589,8 +1753,8 @@ export default function GroceryUATReadyApp() {
                                               setPosCart([]);
                                               setPosCheckoutModal(false);
                                               setPaymentForm({ method: "Cash", received: "", splitCash: "", splitCard: "" });
-                                              fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
-                                              fetch("/api/orders").then(r => r.json()).then(data => setAdminOrders(data || []));
+                                              fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                              fetch("/api/orders").then(r => r.json()).then(data => setAdminOrders(Array.isArray(data) ? data : (data?.orders ?? [])));
                                             } else {
                                               window.alert("POS Failure: " + req.error);
                                             }
@@ -1613,6 +1777,57 @@ export default function GroceryUATReadyApp() {
                       )}
 
                       {adminTab === "Add & Edit" && (<div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                        {/* ── CSV Bulk Import (G-055) ── */}
+                        <div style={{ padding: 16, border: "1px solid #22c55e", borderRadius: 12, background: "rgba(34,197,94,0.05)" }}>
+                          <h3 style={{ marginBottom: 8, color: "#86efac" }}>📥 Bulk CSV Import</h3>
+                          <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 12 }}>
+                            Upload a CSV with columns: <code style={{ background: "#0f172a", padding: "2px 6px", borderRadius: 4 }}>name, category, price, stock, unit, sku, barcode, description</code>
+                          </p>
+                          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              type="file"
+                              accept=".csv"
+                              id="csv-import-input"
+                              style={{ display: "none" }}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const formData = new FormData();
+                                formData.append("file", file);
+                                setMessage("Importing CSV...");
+                                try {
+                                  const res = await fetch("/api/products/import", { method: "POST", body: formData });
+                                  const data = await res.json();
+                                  if (data.success) {
+                                    setMessage(`✅ Import complete: ${data.summary.imported} created, ${data.summary.updated} updated, ${data.summary.failed} failed.`);
+                                    // Refresh product list
+                                    fetch("/api/products").then(r => r.json()).then(d => { if (Array.isArray(d)) setAdminProducts(d); });
+                                  } else {
+                                    setMessage(`❌ Import failed: ${data.error}`);
+                                  }
+                                } catch {
+                                  setMessage("❌ Import failed: network error");
+                                }
+                                // Reset file input
+                                (e.target as HTMLInputElement).value = "";
+                              }}
+                            />
+                            <button
+                              onClick={() => document.getElementById("csv-import-input")?.click()}
+                              style={{ padding: "10px 20px", background: "#15803d", color: "white", border: 0, borderRadius: 8, cursor: "pointer", fontWeight: "bold" }}
+                            >
+                              📂 Choose CSV File & Import
+                            </button>
+                            <a
+                              href="data:text/csv;charset=utf-8,name,category,price,stock,unit,sku,barcode,description%0AExample Apple,Fruits,0.89,100,KG,APPLE-001,,Fresh UK apples"
+                              download="groceryos_import_template.csv"
+                              style={{ color: "#38bdf8", fontSize: 13, textDecoration: "none" }}
+                            >
+                              ⬇ Download Template
+                            </a>
+                          </div>
+                        </div>
+
                         <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                           <h3 style={{ marginBottom: 12 }}>Add New Product (Master Data Only)</h3>
                           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1964,7 +2179,7 @@ export default function GroceryUATReadyApp() {
                                       <div style={{ color: "#e2e8f0", marginTop: 4 }}>{o.customer?.name ? "Customer: " + o.customer.name : "Customer #" + o.customerId}</div>
                                     </div>
                                     <div style={{ textAlign: "right" }}>
-                                      <strong style={{ fontSize: 18, color: "#10b981" }}>£{o.total.toFixed(2)}</strong>
+                                      <strong style={{ fontSize: 18, color: "#10b981" }}>£{(o.total / 100).toFixed(2)}</strong>
                                     </div>
                                   </div>
                                   <div style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 16, background: "#0f172a", padding: 10, borderRadius: 8 }}>
@@ -2203,7 +2418,7 @@ export default function GroceryUATReadyApp() {
                                 setInventoryBatches([b, ...inventoryBatches]);
 
                                 // Automatically fetch the latest products mapping directly mirroring API incrementation bindings!
-                                fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+                                fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
 
                                 setMessage("Ledger securely encoded and Stock updated.");
                                 setNewBatch({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
@@ -2245,7 +2460,7 @@ export default function GroceryUATReadyApp() {
                                           const res = await fetch("/api/inventory?id=" + b.id, { method: "DELETE" }).then(r => r.json());
                                           if (res.success) {
                                             setInventoryBatches(prev => prev.filter(x => x.id !== b.id));
-                                            fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(data || []));
+                                            fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
                                           } else {
                                             window.alert("Ledger Void Failed: " + res.error);
                                           }
@@ -2312,167 +2527,311 @@ export default function GroceryUATReadyApp() {
                               <thead>
                                 <tr style={{ borderBottom: "1px solid #475569" }}>
                                   <th style={{ padding: 8 }}>Product</th>
-                                  <th style={{ padding: 8 }}>Total Lifecycle Procured</th>
-                                  <th style={{ padding: 8 }}>Total Deficit (Sold)</th>
-                                  <th style={{ padding: 8 }}>Physical Active Stock</th>
-                                  <th style={{ padding: 8 }}>Weighted Avg COGS</th>
-                                  <th style={{ padding: 8 }}>Total Capital Liability</th>
+                                  <th style={{ padding: 8 }}>Total Procured</th>
+                                  <th style={{ padding: 8 }}>Units Sold</th>
+                                  <th style={{ padding: 8 }}>Current Stock</th>
+                                  <th style={{ padding: 8 }}>Avg COGS/Unit</th>
+                                  <th style={{ padding: 8 }}>Capital Liability</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {adminProducts.map(p => {
                                   const soldUnits = adminOrders.reduce((sum, o) => {
-                                    let items = [];
-                                    try { items = typeof o.items === 'string' ? JSON.parse(o.items) : o.items; } catch (e) { }
-                                    if (!Array.isArray(items)) items = Object.values(o.items || {});
-                                    const match = items.find((i: any) => i.id === p.id);
-                                    return sum + (match ? match.qty : 0);
+                                    let items: any[] = [];
+                                    try { items = typeof o.items === 'string' ? JSON.parse(o.items) : (Array.isArray(o.items) ? o.items : []); } catch { }
+                                    const match = items.find((i: any) => i.id === p.id || i.productId === p.id);
+                                    return sum + (match ? (match.qty || match.quantity || 0) : 0);
                                   }, 0);
-
-                                  const relatedBatches = inventoryBatches.filter(b => b.productId === p.id);
-                                  const ledgerBought = relatedBatches.reduce((sum, b) => sum + parseInt(b.quantity), 0);
-                                  const avgCost = ledgerBought > 0 ? relatedBatches.reduce((sum, b) => sum + (parseFloat(b.costPrice) * parseInt(b.quantity)), 0) / ledgerBought : (p.price * 0.7);
-
-                                  const currentStock = p.stock;
+                                  const relatedBatches = inventoryBatches.filter((b: any) => b.productId === p.id || b.productId === String(p.id));
+                                  const ledgerBought = relatedBatches.reduce((sum: number, b: any) => sum + Math.abs(parseFloat(b.quantity) || 0), 0);
+                                  const avgCost = ledgerBought > 0 ? relatedBatches.reduce((sum: number, b: any) => sum + ((parseFloat(b.costPrice) || 0) * Math.abs(parseFloat(b.quantity) || 0)), 0) / ledgerBought : (p.price * 0.6);
+                                  const currentStock = Math.max(0, p.stock);
                                   const trueTotalBought = currentStock + soldUnits;
                                   const totalCapitalLiability = currentStock * avgCost;
-
-                                  return Array.from({ length: 1 }).filter(() => trueTotalBought > 0).map(() => (
+                                  if (trueTotalBought === 0) return null;
+                                  return (
                                     <tr key={p.id} style={{ borderBottom: "1px solid #1e293b" }}>
                                       <td style={{ padding: 8 }}><strong>{p.name}</strong></td>
-                                      <td style={{ padding: 8 }}>{trueTotalBought} units</td>
-                                      <td style={{ padding: 8, color: "#fca5a5" }}>-{soldUnits} units</td>
-                                      <td style={{ padding: 8, color: "#86efac", fontWeight: "bold" }}>{currentStock} units</td>
-                                      <td style={{ padding: 8 }}>£{avgCost.toFixed(2)} / unit</td>
-                                      <td style={{ padding: 8 }}>£{totalCapitalLiability.toFixed(2)} suspended</td>
+                                      <td style={{ padding: 8 }}>{trueTotalBought} {p.unit}</td>
+                                      <td style={{ padding: 8, color: "#fca5a5" }}>-{soldUnits} {p.unit}</td>
+                                      <td style={{ padding: 8, color: currentStock <= 0 ? "#ef4444" : "#86efac", fontWeight: "bold" }}>{currentStock} {p.unit}</td>
+                                      <td style={{ padding: 8 }}>£{avgCost.toFixed(2)}</td>
+                                      <td style={{ padding: 8 }}>£{totalCapitalLiability.toFixed(2)}</td>
                                     </tr>
-                                  ));
+                                  );
                                 })}
                               </tbody>
                             </table>
                           </div>
+
+                          {/* ── Wastage & Loss Quick Log ───────────────────────── */}
+                          <div style={{ padding: 16, border: "1px solid #ef4444", borderRadius: 12 }}>
+                            <h3 style={{ marginBottom: 4, color: "#fca5a5" }}>🗑️ Wastage & Loss Log</h3>
+                            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>Record shrinkage, theft, expiry, and quality losses. These feed into the Analytics P&amp;L automatically.</p>
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                              <select value={newBatch.productId} onChange={e => { const prod = adminProducts.find((x: any) => String(x.id) === e.target.value); setNewBatch({ ...newBatch, productId: e.target.value, productName: prod?.name || "" }); }} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: "1 1 180px" }}>
+                                <option value="" disabled>Select Product...</option>
+                                {adminProducts.map((p: any) => <option key={p.id} value={p.id}>{p.name} (Stock: {Math.max(0, p.stock)})</option>)}
+                              </select>
+                              <select value={newBatch.category} onChange={e => setNewBatch({ ...newBatch, category: e.target.value })} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", flex: "1 1 160px" }}>
+                                <option value="expired">Expired ⏰</option>
+                                <option value="theft">Theft / Stolen 🔓</option>
+                                <option value="quality">Quality / Damaged 🚫</option>
+                                <option value="wastage">Wastage / Spoilage</option>
+                                <option value="other">Other Loss</option>
+                              </select>
+                              <input type="number" placeholder="Qty lost" min="0.01" step="0.01" value={newBatch.quantity} onChange={e => setNewBatch({ ...newBatch, quantity: e.target.value })} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 110 }} />
+                              <input type="number" placeholder="£ Loss value" min="0" step="0.01" value={newBatch.costPrice} onChange={e => setNewBatch({ ...newBatch, costPrice: e.target.value })} style={{ padding: 10, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #475569", width: 130 }} />
+                              <button onClick={async () => {
+                                if (!newBatch.productId || !newBatch.quantity) return window.alert("Select a product and enter quantity.");
+                                const qty = parseFloat(newBatch.quantity);
+                                if (qty <= 0) return window.alert("Quantity must be > 0.");
+                                const lossVal = parseFloat(newBatch.costPrice) || 0;
+                                const b = await fetch("/api/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: parseInt(newBatch.productId), quantity: -qty, costPrice: lossVal, supplier: `wastage:${newBatch.category}` }) }).then(r => r.json());
+                                if (b.error) return setMessage("Wastage error: " + b.error);
+                                setInventoryBatches((prev: any[]) => [b, ...prev]);
+                                fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                setMessage(`✅ Wastage logged: ${qty} units — ${newBatch.category} — £${lossVal.toFixed(2)} loss`);
+                                setNewBatch({ productId: "", productName: "", category: "expired", quantity: "", costPrice: "", supplier: "" });
+                              }} style={{ padding: "10px 20px", background: "#dc2626", color: "white", border: 0, borderRadius: 8, fontWeight: "bold", cursor: "pointer" }}>Log Loss</button>
+                            </div>
+                            {inventoryBatches.filter((b: any) => b.supplier && String(b.supplier).startsWith("wastage:")).length > 0 && (
+                              <div style={{ marginTop: 8 }}>
+                                <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Recent Losses</div>
+                                {inventoryBatches.filter((b: any) => b.supplier && String(b.supplier).startsWith("wastage:")).slice(0, 6).map((b: any, i: number) => (
+                                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: "#1e293b", borderRadius: 6, fontSize: 12, marginBottom: 4, borderLeft: "3px solid #dc2626" }}>
+                                    <span style={{ color: "#cbd5e1" }}>{b.product?.name || "Product"} · {String(b.supplier).replace("wastage:", "")}</span>
+                                    <span style={{ color: "#fca5a5" }}>{Math.abs(b.quantity)} units · £{(b.costPrice || 0).toFixed(2)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ── Returns & Refund History ──────────────────────── */}
+                          <div style={{ padding: 16, border: "1px solid #f97316", borderRadius: 12 }}>
+                            <h3 style={{ marginBottom: 4, color: "#fb923c" }}>↩️ Returns & Refund History</h3>
+                            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>All customer returns and refunds. Process returns from the Orders tab — they appear here automatically.</p>
+                            {adminReturns.length === 0 ? (
+                              <div style={{ color: "#475569", fontStyle: "italic" }}>No returns recorded yet.</div>
+                            ) : (
+                              <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13 }}>
+                                <thead>
+                                  <tr style={{ borderBottom: "1px solid #475569" }}>
+                                    <th style={{ padding: 8 }}>Date</th>
+                                    <th style={{ padding: 8 }}>Order #</th>
+                                    <th style={{ padding: 8 }}>Product</th>
+                                    <th style={{ padding: 8 }}>Qty</th>
+                                    <th style={{ padding: 8 }}>Reason</th>
+                                    <th style={{ padding: 8 }}>Condition</th>
+                                    <th style={{ padding: 8 }}>Refund £</th>
+                                    <th style={{ padding: 8 }}>Restocked</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {[...adminReturns].reverse().slice(0, 20).map((r: any, i: number) => (
+                                    <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
+                                      <td style={{ padding: 8, color: "#64748b" }}>{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "-"}</td>
+                                      <td style={{ padding: 8 }}>#{r.orderId}</td>
+                                      <td style={{ padding: 8 }}>{r.productName}</td>
+                                      <td style={{ padding: 8 }}>{r.quantity}</td>
+                                      <td style={{ padding: 8 }}>
+                                        <span style={{ background: r.reason === "theft" ? "#7f1d1d" : r.reason === "expired" ? "#78350f" : r.reason === "quality" ? "#4c1d95" : "#1e293b", color: r.reason === "theft" ? "#fca5a5" : r.reason === "expired" ? "#fbbf24" : r.reason === "quality" ? "#c4b5fd" : "#94a3b8", padding: "2px 6px", borderRadius: 4, fontSize: 11 }}>{r.reason}</span>
+                                      </td>
+                                      <td style={{ padding: 8, color: "#94a3b8" }}>{r.condition}</td>
+                                      <td style={{ padding: 8, color: "#fb923c", fontWeight: "bold" }}>£{((r.refundAmount || 0) / 100).toFixed(2)}</td>
+                                      <td style={{ padding: 8, color: r.restocked ? "#86efac" : "#64748b" }}>{r.restocked ? "✅ Yes" : "No"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
                         </div>
                       )}
+
+
 
                       {adminTab === "Analytics" && (() => {
                         const today = new Date().toISOString().split("T")[0];
                         const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-                        let todaySales = 0;
-                        let weeklySales = 0;
-                        let todayOrdersCount = 0;
-                        let totalSales = 0;
-                        let orderCount = adminOrders.length;
-                        let allSoldItems: Record<string, number> = {};
-                        let categorySales: Record<string, number> = {};
+                        let onlineOrders = 0, posOrders = 0, onlineRevenue = 0, posRevenue = 0;
+                        let todaySales = 0, weeklySales = 0, todayOrdersCount = 0, totalRevenue = 0;
+                        const allSoldItems: Record<string, number> = {}, categorySales: Record<string, number> = {};
                         let promoSales = 0;
-
                         const buyersMap: Record<string, number> = {};
 
-                        adminOrders.forEach(o => {
-                          const refundsForOrder = adminReturns.filter((r: any) => r.orderId === o.id).reduce((sum: number, r: any) => sum + r.refundAmount, 0);
-                          const netTotal = Math.max(0, o.total - refundsForOrder);
-
-                          totalSales += netTotal;
-
-                          const dateRaw = o.createdAt || o.date || new Date().toISOString();
-                          let orderDateISO = "";
-                          try {
-                            orderDateISO = new Date(dateRaw).toISOString();
-                          } catch (err) {
-                            return;
-                          }
-
-                          if (orderDateISO.startsWith(today)) {
-                            todaySales += netTotal;
-                            todayOrdersCount++;
-                          }
-                          if (orderDateISO >= lastWeek) {
-                            weeklySales += netTotal;
-                          }
-
-                          if (o.buyerId) {
-                            buyersMap[o.buyerId] = (buyersMap[o.buyerId] || 0) + 1;
-                          }
-
-                          try {
-                            const items = JSON.parse(o.items || "[]");
-                            items.forEach((item: any) => {
-                              allSoldItems[item.id] = (allSoldItems[item.id] || 0) + item.qty;
-                              const product = adminProducts.find(p => p.id === item.id);
-                              if (product) {
-                                categorySales[product.category] = (categorySales[product.category] || 0) + item.qty;
-                                if (product.promo) {
-                                  promoSales += (item.qty * item.price);
-                                }
-                              }
-                            });
-                          } catch (e) { }
+                        adminOrders.forEach((o: any) => {
+                          const orderRefunds = adminReturns.filter((r: any) => r.orderId === o.id).reduce((s: number, r: any) => s + (r.refundAmount || 0), 0);
+                          const net = Math.max(0, (o.total || 0) - orderRefunds);
+                          totalRevenue += net;
+                          const isPOS = o.paymentMethod === "Cash" || o.paymentMethod === "Card (POS)" || o.channel === "pos" || (!o.buyerId && !o.customerId);
+                          if (isPOS) { posOrders++; posRevenue += net; } else { onlineOrders++; onlineRevenue += net; }
+                          let dISO = ""; try { dISO = new Date(o.createdAt || o.date || new Date()).toISOString(); } catch { return; }
+                          if (dISO.startsWith(today)) { todaySales += net; todayOrdersCount++; }
+                          if (dISO >= lastWeek) weeklySales += net;
+                          if (o.buyerId) buyersMap[o.buyerId] = (buyersMap[o.buyerId] || 0) + 1;
+                          try { JSON.parse(o.items || "[]").forEach((item: any) => { allSoldItems[item.id] = (allSoldItems[item.id] || 0) + item.qty; const pr = adminProducts.find((p: any) => p.id === item.id); if (pr) { categorySales[pr.category] = (categorySales[pr.category] || 0) + item.qty; if (pr.promo) promoSales += item.qty * (item.price || 0); } }); } catch { }
                         });
 
-                        const avgBasket = orderCount > 0 ? (totalSales / orderCount).toFixed(2) : "0.00";
-                        const repeatCustomers = Object.values(buyersMap).filter(qty => qty > 1).length;
+                        const wastage: Record<string, { count: number; value: number }> = {};
+                        let totalWaste = 0;
+                        adminReturns.forEach((r: any) => {
+                          const lr = String(r.reason || "").toLowerCase();
+                          const cat = lr.includes("theft") || lr.includes("stolen") ? "Theft" : lr.includes("expir") ? "Expired" : lr.includes("quality") || lr.includes("damaged") || lr.includes("spoil") ? "Quality Issue" : (lr.includes("customer") || lr.includes("refund") || lr.includes("wrong")) ? "Customer Return" : "Other";
+                          if (!wastage[cat]) wastage[cat] = { count: 0, value: 0 };
+                          wastage[cat].count++; wastage[cat].value += (r.refundAmount || 0); totalWaste += (r.refundAmount || 0);
+                        });
 
-                        const sortedProducts = Object.entries(allSoldItems)
-                          .sort((a: any, b: any) => b[1] - a[1])
-                          .map(entry => {
-                            const p = adminProducts.find(p => String(p.id) === entry[0]);
-                            return p ? { name: p.name, qty: entry[1] } : null;
-                          }).filter(Boolean);
+                        const totalRefunds = adminReturns.reduce((s: number, r: any) => s + (r.refundAmount || 0), 0);
+                        const netProfit = totalRevenue - totalWaste;
+                        const avgBasket = adminOrders.length > 0 ? (totalRevenue / adminOrders.length / 100).toFixed(2) : "0.00";
+                        const repeatCustomers = Object.values(buyersMap).filter((v: any) => v > 1).length;
+                        const topSelling = Object.entries(allSoldItems).sort((a: any, b: any) => b[1] - a[1]).slice(0, 5).map(e => { const p = adminProducts.find((p: any) => String(p.id) === e[0]); return p ? { name: p.name, qty: e[1] } : null; }).filter(Boolean);
+                        const slowMoving = adminProducts.map((p: any) => ({ name: p.name, qty: allSoldItems[p.id] || 0 })).sort((a: any, b: any) => a.qty - b.qty).slice(0, 5);
+                        const lowStock = adminProducts.filter((p: any) => p.stock > 0 && p.stock < 10);
+                        const outOfStock = adminProducts.filter((p: any) => p.stock <= 0);
+                        const bestCat = Object.entries(categorySales).sort((a: any, b: any) => b[1] - a[1])[0];
 
-                        const topSelling = sortedProducts.slice(0, 3);
-                        const slowMoving = adminProducts.map(p => ({
-                          name: p.name,
-                          qty: allSoldItems[p.id] || 0
-                        })).sort((a, b) => a.qty - b.qty).slice(0, 3);
-
-                        const bestCategory = Object.entries(categorySales).sort((a, b) => b[1] - a[1])[0];
-                        const lowStock = adminProducts.filter(p => p.stock < 10).map(p => p.name);
+                        const kpiStyle = (c?: string) => ({ padding: 12, background: "#1e293b", borderRadius: 8, border: "1px solid #334155" });
+                        const sec = (bc: string) => ({ padding: 14, background: "#0f172a", borderRadius: 10, border: `1px solid ${bc}`, marginBottom: 12 });
 
                         return (
                           <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
-                            <h3 style={{ marginBottom: 16 }}>Analytics Dashboard</h3>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                              <h3 style={{ margin: 0 }}>📊 Operations Dashboard</h3>
+                              <span style={{ fontSize: 11, color: "#475569" }}>Live · GBP</span>
+                            </div>
 
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Today&apos;s Sales</div>
-                                <div style={{ fontSize: 24, fontWeight: "bold", color: "#86efac" }}>£{todaySales.toFixed(2)}</div>
+                            {/* KPIs */}
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 12 }}>
+                              {[
+                                { l: "Today Revenue", v: `£${(todaySales / 100).toFixed(2)}`, s: `${todayOrdersCount} orders`, c: "#86efac" },
+                                { l: "Weekly Revenue", v: `£${(weeklySales / 100).toFixed(2)}`, c: "#60a5fa" },
+                                { l: "Total Revenue", v: `£${(totalRevenue / 100).toFixed(2)}`, s: `${adminOrders.length} total`, c: "#a78bfa" },
+                                { l: "Net P&L", v: `${netProfit >= 0 ? "+" : ""}£${(netProfit / 100).toFixed(2)}`, c: netProfit >= 0 ? "#86efac" : "#fca5a5" },
+                                { l: "Avg Basket", v: `£${avgBasket}` },
+                                { l: "Repeat Customers", v: String(repeatCustomers), s: "2+ orders", c: "#fb923c" },
+                              ].map(({ l, v, s, c }) => (
+                                <div key={l} style={kpiStyle(c)}>
+                                  <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, marginBottom: 3 }}>{l}</div>
+                                  <div style={{ fontSize: 18, fontWeight: "bold", color: c || "#f8fafc" }}>{v}</div>
+                                  {s && <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{s}</div>}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Channel Split */}
+                            <div style={sec("#3b82f6")}>
+                              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>📦 Orders by Channel</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                                <div style={{ padding: 12, background: "#1e293b", borderRadius: 8, borderLeft: "3px solid #3b82f6" }}>
+                                  <div style={{ fontSize: 10, color: "#64748b" }}>🌐 ONLINE ORDERS</div>
+                                  <div style={{ fontSize: 28, fontWeight: "bold", color: "#60a5fa" }}>{onlineOrders}</div>
+                                  <div style={{ fontSize: 12, color: "#94a3b8" }}>£{(onlineRevenue / 100).toFixed(2)}</div>
+                                </div>
+                                <div style={{ padding: 12, background: "#1e293b", borderRadius: 8, borderLeft: "3px solid #f59e0b" }}>
+                                  <div style={{ fontSize: 10, color: "#64748b" }}>🏪 IN-STORE POS</div>
+                                  <div style={{ fontSize: 28, fontWeight: "bold", color: "#fbbf24" }}>{posOrders}</div>
+                                  <div style={{ fontSize: 12, color: "#94a3b8" }}>£{(posRevenue / 100).toFixed(2)}</div>
+                                </div>
                               </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Weekly Sales</div>
-                                <div style={{ fontSize: 24, fontWeight: "bold", color: "#60a5fa" }}>£{weeklySales.toFixed(2)}</div>
-                              </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Daily Orders Count</div>
-                                <div style={{ fontSize: 24, fontWeight: "bold" }}>{todayOrdersCount}</div>
-                              </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Avg Basket Value</div>
-                                <div style={{ fontSize: 24, fontWeight: "bold" }}>£{avgBasket}</div>
-                              </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>Promo Performance</div>
-                                <div style={{ fontSize: 24, fontWeight: "bold" }}>£{promoSales.toFixed(2)}</div>
+                              <div style={{ display: "flex", marginTop: 8, height: 5, borderRadius: 4, overflow: "hidden" }}>
+                                <div style={{ flex: onlineOrders || 1, background: "#3b82f6" }} />
+                                <div style={{ flex: posOrders || 1, background: "#f59e0b" }} />
                               </div>
                             </div>
 
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Top Selling Products</h4>
-                                {topSelling.length ? topSelling.map((p: any, i) => <div key={i} style={{ marginBottom: 6 }}>{i + 1}. {p.name} <span style={{ color: "#60a5fa" }}>({p.qty} sold)</span></div>) : <div style={{ color: "#475569" }}>No data</div>}
+                            {/* P&L */}
+                            <div style={sec("#22c55e")}>
+                              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>💰 Consolidated P&L</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+                                {[["Gross Revenue", `£${(totalRevenue / 100).toFixed(2)}`, "#86efac"], ["Total Losses", `−£${(totalWaste / 100).toFixed(2)}`, "#fca5a5"], ["Refunds", `−£${(totalRefunds / 100).toFixed(2)}`, "#fb923c"], ["Net Profit", `${netProfit >= 0 ? "+" : ""}£${(netProfit / 100).toFixed(2)}`, netProfit >= 0 ? "#86efac" : "#fca5a5"], ["Promo Revenue", `£${(promoSales / 100).toFixed(2)}`, "#34d399"]].map(([l, v, c]) => (
+                                  <div key={l} style={{ padding: 10, background: "#1e293b", borderRadius: 8 }}>
+                                    <div style={{ fontSize: 10, color: "#64748b" }}>{l}</div>
+                                    <div style={{ fontSize: 16, fontWeight: "bold", color: c }}>{v}</div>
+                                  </div>
+                                ))}
                               </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Slow Moving Products</h4>
-                                {slowMoving.map((p: any, i) => <div key={i} style={{ marginBottom: 6, color: "#fca5a5" }}>• {p.name} ({p.qty} sold)</div>)}
-                              </div>
-                              <div style={{ padding: 16, background: "#1e293b", borderRadius: 10, border: "1px solid #475569" }}>
-                                <h4 style={{ margin: "0 0 12px 0", color: "#94a3b8" }}>Stock Running Low</h4>
-                                {lowStock.length ? lowStock.map((name, i) => <span key={i} style={{ display: "inline-block", background: "#7f1d1d", color: "#fca5a5", padding: "4px 8px", borderRadius: 4, marginRight: 6, marginBottom: 6, fontSize: 12 }}>{name}</span>) : <span style={{ color: "#86efac" }}>Inventory Healthy</span>}
-                              </div>
+                            </div>
 
+                            {/* Wastage */}
+                            <div style={sec("#ef4444")}>
+                              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>🗑️ Losses & Wastage Breakdown</div>
+                              {Object.keys(wastage).length === 0
+                                ? <div style={{ color: "#475569", fontStyle: "italic" }}>No losses recorded yet. Log wastage via the Returns tab.</div>
+                                : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+                                    {[["Theft 🔓", "Theft", "#dc2626"], ["Expired ⏰", "Expired", "#d97706"], ["Quality Issue 🚫", "Quality Issue", "#7c3aed"], ["Customer Return 📦", "Customer Return", "#0284c7"], ["Other", "Other", "#475569"]].map(([label, key, color]) => {
+                                      const e = wastage[key] || { count: 0, value: 0 };
+                                      return (
+                                        <div key={key} style={{ padding: 10, background: "#1e293b", borderRadius: 8, borderLeft: `3px solid ${color}` }}>
+                                          <div style={{ fontSize: 10, color: "#64748b" }}>{label}</div>
+                                          <div style={{ fontSize: 16, fontWeight: "bold", color }}>{e.count} cases</div>
+                                          <div style={{ fontSize: 11, color: "#94a3b8" }}>£{(e.value / 100).toFixed(2)}</div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                              }
+                            </div>
+
+                            {/* Returns & Refunds */}
+                            <div style={sec("#f97316")}>
+                              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>↩️ Returns & Refunds</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 10 }}>
+                                {[["Total Returns", String(adminReturns.length), undefined], ["Total Refunded", `£${(totalRefunds / 100).toFixed(2)}`, "#fb923c"], ["Best Category", bestCat ? bestCat[0] : "N/A", "#60a5fa"]].map(([l, v, c]) => (
+                                  <div key={l} style={{ padding: 10, background: "#1e293b", borderRadius: 8 }}>
+                                    <div style={{ fontSize: 10, color: "#64748b" }}>{l}</div>
+                                    <div style={{ fontSize: 16, fontWeight: "bold", color: c || "#f8fafc" }}>{v}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              {adminReturns.length > 0 && [...adminReturns].reverse().slice(0, 4).map((r: any, i: number) => (
+                                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: "#1e293b", borderRadius: 6, fontSize: 12, marginBottom: 4 }}>
+                                  <span style={{ color: "#cbd5e1" }}>Order #{r.orderId} · {r.productName || r.reason}</span>
+                                  <span style={{ color: "#fb923c", fontWeight: "bold" }}>−£{((r.refundAmount || 0) / 100).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Stock Health */}
+                            <div style={sec("#eab308")}>
+                              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>📦 Stock Health</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, marginBottom: 10 }}>
+                                {[["Out of Stock", String(outOfStock.length), outOfStock.length > 0 ? "#fca5a5" : "#86efac"], ["Low Stock (<10)", String(lowStock.length), lowStock.length > 0 ? "#fbbf24" : "#86efac"], ["Total Products", String(adminProducts.length), undefined]].map(([l, v, c]) => (
+                                  <div key={l} style={{ padding: 10, background: "#1e293b", borderRadius: 8 }}>
+                                    <div style={{ fontSize: 10, color: "#64748b" }}>{l}</div>
+                                    <div style={{ fontSize: 16, fontWeight: "bold", color: c || "#f8fafc" }}>{v}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              {outOfStock.length > 0 && <div style={{ marginBottom: 8 }}><div style={{ fontSize: 10, color: "#ef4444", fontWeight: "bold", marginBottom: 4 }}>OUT OF STOCK — URGENT</div><div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{outOfStock.map((p: any) => <span key={p.id} style={{ background: "#7f1d1d", color: "#fca5a5", padding: "2px 8px", borderRadius: 4, fontSize: 11 }}>{p.name}</span>)}</div></div>}
+                              {lowStock.length > 0 && <div><div style={{ fontSize: 10, color: "#eab308", fontWeight: "bold", marginBottom: 4 }}>LOW STOCK — REORDER SOON</div><div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{lowStock.map((p: any) => <span key={p.id} style={{ background: "#422006", color: "#fbbf24", padding: "2px 8px", borderRadius: 4, fontSize: 11 }}>{p.name} ({p.stock})</span>)}</div></div>}
+                            </div>
+
+                            {/* Top & Slow Sellers */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                              <div style={sec("#334155")}>
+                                <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>🏆 Top 5 Sellers</div>
+                                {topSelling.length ? topSelling.map((p: any, i: number) => (
+                                  <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
+                                    <span style={{ color: "#cbd5e1" }}>{i + 1}. {p.name}</span>
+                                    <span style={{ color: "#60a5fa", fontWeight: "bold" }}>{p.qty} sold</span>
+                                  </div>
+                                )) : <div style={{ color: "#475569" }}>No sales yet</div>}
+                              </div>
+                              <div style={sec("#334155")}>
+                                <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: "bold", marginBottom: 10 }}>🐢 Slow Movers (Top 5)</div>
+                                {slowMoving.map((p: any, i: number) => (
+                                  <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
+                                    <span style={{ color: "#cbd5e1" }}>{p.name}</span>
+                                    <span style={{ color: "#fca5a5" }}>{p.qty} sold</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        )
+                        );
                       })()}
 
                       {adminTab === "Global Promos" && (
@@ -2759,10 +3118,17 @@ export default function GroceryUATReadyApp() {
                         <div key={i} style={{ background: "#0f172a", padding: 18, borderRadius: 10, border: "1px solid #334155", position: "relative" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "flex-start" }}>
                             <div>
-                              <strong style={{ color: "#38bdf8", fontSize: 16, display: "block" }}>Secure Order Delivered</strong>
-                              <span style={{ fontSize: 12, color: "#64748b" }}>{o.date ? new Date(o.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : "Recently Completed"}</span>
+                              <strong style={{ color: "#38bdf8", fontSize: 16, display: "block" }}>
+                                {(o as any).status ? `Order — ${String((o as any).status).toUpperCase()}` : "Secure Order Delivered"}
+                              </strong>
+                              <span style={{ fontSize: 12, color: "#64748b" }}>{o.date ? new Date(o.date).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Recently Completed"}</span>
                             </div>
-                            <span style={{ color: "#86efac", fontWeight: "bold", fontSize: 18 }}>£{o.total.toFixed(2)}</span>
+                            <div style={{ textAlign: "right" }}>
+                              <span style={{ color: "#86efac", fontWeight: "bold", fontSize: 18, display: "block" }}>£{(o.total / 100).toFixed(2)}</span>
+                              {(o as any).id && (
+                                <span style={{ fontSize: 11, color: "#64748b" }}>#{(o as any).id}</span>
+                              )}
+                            </div>
                           </div>
                           <div style={{ color: "#cbd5e1", fontSize: 14, marginBottom: 12, lineHeight: 1.5 }}>
                             {(() => {
@@ -2775,12 +3141,10 @@ export default function GroceryUATReadyApp() {
                           </div>
                           <div style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>Delivered to: {o.address}</div>
 
-                          <div style={{ display: "flex", gap: 10 }}>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                             <button
                               onClick={() => {
                                 const newCart: any[] = [];
-
-                                // Safely handle both Legacy String payloads and Raw JSON arrays
                                 let extractedProducts: { name: string, qty: number }[] = [];
                                 try {
                                   const parsed = JSON.parse(o.items as string);
@@ -2791,25 +3155,25 @@ export default function GroceryUATReadyApp() {
                                     if (match) extractedProducts.push({ name: match[1].trim(), qty: parseInt(match[2]) });
                                   });
                                 }
-
                                 extractedProducts.forEach(ep => {
                                   const actualProduct = products.find(p => p.name.trim().toLowerCase() === ep.name.toLowerCase());
-                                  if (actualProduct) {
-                                    newCart.push({ ...actualProduct, qty: ep.qty });
-                                  }
+                                  if (actualProduct) newCart.push({ ...actualProduct, qty: ep.qty });
                                 });
-
-                                if (newCart.length > 0) {
-                                  setCart(newCart);
-                                  setMessage("Historical shopping basket successfully reconstituted! You can now edit quantities.");
-                                } else {
-                                  setMessage("Error: Some of these products no longer exist in the active catalog.");
-                                }
+                                if (newCart.length > 0) { setCart(newCart); setMessage("Historical shopping basket successfully reconstituted! You can now edit quantities."); }
+                                else setMessage("Error: Some of these products no longer exist in the active catalog.");
                               }}
                               style={{ padding: "8px 16px", background: "#2563eb", color: "white", border: 0, borderRadius: 6, fontWeight: "bold", cursor: "pointer", flex: 1 }}
                             >
                               Reorder This Delivery
                             </button>
+                            {(o as any).id && buyer?.mobile && (
+                              <button
+                                onClick={() => window.open(`/api/orders/invoice?orderId=${(o as any).id}&phone=${encodeURIComponent(buyer.mobile)}`, "_blank")}
+                                style={{ padding: "8px 16px", background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", borderRadius: 6, fontWeight: "bold", cursor: "pointer" }}
+                              >
+                                📄 View Invoice
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}

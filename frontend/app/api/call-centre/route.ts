@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 
     const { agentId, customerPhone, items, paymentMethod, deliveryAddress, notes, callId } = parsed.data;
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
 
     // Find or create customer
     let customer = await prisma.customer.findFirst({ where: { phone: customerPhone } });
@@ -56,16 +56,18 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: `Insufficient stock for ${product.name}.` }, { status: 409 });
       }
       total += product.price * qty;
-      orderItems.push({ id: productId, name: product.name, price: product.price, qty });
+      orderItems.push({ productId, price: product.price, quantity: qty });
     }
 
     const order = await prisma.order.create({
       data: {
         customerId: customer.id,
         status:     "processing",
-        total:      parseFloat(total.toFixed(2)),
-        items:      JSON.stringify(orderItems),
+        total:      total,
         address:    deliveryAddress,
+        items: {
+          create: orderItems,
+        },
       },
     });
 
@@ -98,7 +100,7 @@ export async function GET(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     // Recent phone orders (logged as PHONE_ORDER in audit)
     const recentPhoneOrders = await (prisma as any).auditLog.findMany({
       where:   { action: "PHONE_ORDER" },

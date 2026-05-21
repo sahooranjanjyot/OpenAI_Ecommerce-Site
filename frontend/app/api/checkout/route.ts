@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
 // ── UK VAT Rate (G-022) ───────────────────────────────────────────────────────
@@ -32,11 +32,13 @@ const CheckoutSchema = z.object({
     name:   z.string().min(1).max(200),
     mobile: z.string().min(5).max(20),
   }),
-  cart:            z.array(CartItemSchema).min(1, "Cart cannot be empty"),
-  deliveryAddress: z.string().min(5).max(500),
-  deliveryComment: z.string().max(500).optional().default(""),
-  subtotal:        z.number().positive("Subtotal must be positive"),
-  idempotencyKey:  z.string().optional(),
+  cart:              z.array(CartItemSchema).min(1, "Cart cannot be empty"),
+  deliveryAddress:   z.string().min(5).max(500),
+  deliveryComment:   z.string().max(500).optional().default(""),
+  subtotal:          z.number().positive("Subtotal must be positive"),
+  idempotencyKey:    z.string().optional(),
+  paymentIntentId:   z.string().optional(), // Stripe PaymentIntent ID (G-029 SCA flow)
+  couponCode:        z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -49,7 +51,27 @@ export async function POST(req: Request) {
       { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
     }
 
-    const { buyer, cart, deliveryAddress, deliveryComment, subtotal, idempotencyKey } = parsed.data;
+    const { buyer, cart, deliveryAddress, deliveryComment, subtotal, idempotencyKey, paymentIntentId, couponCode } = parsed.data;
+
+    // ── Stripe PaymentIntent verification (G-029 SCA) ─────────────────────
+    // If a paymentIntentId is provided, verify it actually succeeded with Stripe
+    // before creating the order. This prevents forged/replayed payment claims.
+    if (paymentIntentId && process.env.STRIPE_SECRET_KEY) {
+      try {
+        const Stripe = (await import("stripe")).default;
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+        const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (intent.status !== "succeeded") {
+          return NextResponse.json(
+            { error: `Payment not confirmed (status: ${intent.status}). Please complete payment first.` },
+            { status: 402 }
+          );
+        }
+      } catch (stripeErr: any) {
+        console.error("[CHECKOUT] Stripe verification failed:", stripeErr.message);
+        return NextResponse.json({ error: "Payment verification failed. Please try again." }, { status: 402 });
+      }
+    }
 
     // Idempotency protection — now ATOMIC inside DB transaction (M-E-1 fix)
     // The check + order creation happen in one transaction.
@@ -57,7 +79,7 @@ export async function POST(req: Request) {
     // on idempotencyKey, which we catch and return the existing order for.
     if (idempotencyKey) {
       const existing = await (prisma as any).order.findFirst({
-        where: { idempotencyKey: key }
+        where: { idempotencyKey }
       });
       if (existing) {
         return NextResponse.json({ success: true, message: "Duplicate request safely ignored.", order: existing });
@@ -99,14 +121,15 @@ export async function POST(req: Request) {
     let customer = await prisma.customer.findUnique({ where: { phone: buyer.mobile } });
 
     if (customer) {
-      const newOrderCount = customer.orders + 1;
+      const orderCount = await prisma.order.count({ where: { customerId: customer.id } });
+      const newOrderCount = orderCount + 1;
       let updatedNotes = customer.notes || "";
       if (newOrderCount >= 5 && !updatedNotes.includes("LOYALTY")) {
         updatedNotes = (updatedNotes + " LOYALTY").trim();
       }
       customer = await prisma.customer.update({
         where: { id: customer.id },
-        data: { orders: newOrderCount, address: deliveryAddress, notes: updatedNotes },
+        data: { address: deliveryAddress, notes: updatedNotes },
       });
     } else {
       customer = await prisma.customer.create({
@@ -114,7 +137,6 @@ export async function POST(req: Request) {
           name: buyer.name,
           phone: buyer.mobile,
           address: deliveryAddress,
-          orders: 1,
           notes: deliveryComment,
           blocked: false,
         },
@@ -124,13 +146,23 @@ export async function POST(req: Request) {
     // Create order with VAT breakdown and idempotency key (G-016, G-018, G-022)
     const order = await prisma.order.create({
       data: {
-        customerId:    customer.id,
-        total:         totalWithVAT,
-        items:         JSON.stringify(cart),
-        address:       deliveryAddress,
-        status:        "new",
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-      } as any,
+        customerId:           customer.id,
+        total:                Math.round(totalWithVAT),
+        shippingAddr:         deliveryAddress,
+        status:               "new",
+        idempotencyKey:       idempotencyKey || null,
+        stripePaymentIntentId: paymentIntentId || null,
+        items: {
+          create: cart.map(item => {
+            const dbProduct = productMap.get(item.id)!;
+            return {
+              productId: item.id,
+              quantity:  item.qty,
+              price:     dbProduct.price,
+            };
+          }),
+        },
+      },
     });
 
     // Stock deduction inside DB transaction with row-level locks (G-016)

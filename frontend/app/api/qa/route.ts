@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin, getAuthUser } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin, getAuthUser } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 /**
  * Product Q&A System (G-161, G-146)
@@ -32,7 +32,7 @@ const AnswerSchema = z.object({
 // ── GET /api/qa?productId=X — public: get Q&A for product ────────────────────
 export async function GET(req: Request) {
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const productId = parseInt(new URL(req.url).searchParams.get("productId") ?? "0", 10);
     const where: any = { answered: true };
     if (productId) where.productId = productId;
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Rate limit exceeded. Please wait before submitting more questions." }, { status: 429 });
     }
 
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const body = await req.json();
     
     // Check if user is authenticated
@@ -109,7 +109,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const parsed = AnswerSchema.safeParse(await req.json());
     if (!parsed.success) { const _msg = (parsed.error as any).issues?.[0]?.message ?? "Invalid input"; return NextResponse.json({ error: _msg }, { status: 400 }); }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin, getSession } from "../../../lib/auth-middleware";
-import { cache } from "../../../lib/cache";
+import { requireAdmin, getSession } from "@/lib/auth-middleware";
+import { cache } from "@/lib/cache";
 
 /**
  * A/B Testing Framework (G-136, G-137)

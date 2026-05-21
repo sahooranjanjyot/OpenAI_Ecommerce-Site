@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 // ── GET /api/orders/track?orderId=X&phone=Y — public order tracking (G-025) ──
@@ -14,7 +14,10 @@ export async function GET(req: Request) {
 
     const order = await prisma.order.findUnique({
       where:   { id: orderId },
-      include: { customer: { select: { name: true, phone: true } } },
+      include: {
+        customer: { select: { name: true, phone: true } },
+        items: { include: { product: true } },
+      },
     });
 
     if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
@@ -37,14 +40,20 @@ export async function GET(req: Request) {
       { step: 4, label: "Delivered",        done: currentStep >= 4 },
     ];
 
+    const items = (order.items ?? []).map(item => ({
+      name:  item.product?.name ?? `Product #${item.productId}`,
+      price: item.price / 100,
+      qty:   item.quantity,
+    }));
+
     return NextResponse.json({
       orderId:   order.id,
       status:    order.status,
-      total:     order.total,
-      address:   order.address,
+      total:     order.total / 100,
+      address:   order.shippingAddr,
       createdAt: order.createdAt,
       timeline,
-      items:     JSON.parse(order.items as string),
+      items,
     });
   } catch {
     return NextResponse.json({ error: "Failed to fetch order tracking." }, { status: 500 });

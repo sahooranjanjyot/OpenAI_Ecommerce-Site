@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 /**
@@ -46,7 +46,7 @@ export async function GET(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status") ?? "pending";
 
@@ -64,7 +64,7 @@ export async function GET(req: Request) {
 // ── POST /api/moderation — submit content for moderation ─────────────────────
 export async function POST(req: Request) {
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { type, content, author, email, referenceId } = await req.json();
     if (!type || !content) return NextResponse.json({ error: "type and content required." }, { status: 400 });
 
@@ -103,7 +103,7 @@ export async function PUT(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
-    const { prisma } = await import("../../../lib/prisma");
+    const { prisma } = await import("@/lib/prisma");
     const { id, status, note } = await req.json(); // status: approved|rejected
     const item = await (prisma as any).moderationQueue.update({
       where: { id },

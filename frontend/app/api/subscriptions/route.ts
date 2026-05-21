@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { requireAdmin, requireAuth } from "../../../lib/auth-middleware";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin, requireAuth } from "@/lib/auth-middleware";
 import { z } from "zod";
 
 // ── Subscription / Recurring Orders (G-072, G-051, G-166) ────────────────────

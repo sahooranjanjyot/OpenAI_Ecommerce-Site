@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../../../lib/auth-middleware";
+import { requireAdmin } from "@/lib/auth-middleware";
 
 /**
  * ML Recommendations — Collaborative Filtering (G-217, G-218)
@@ -15,26 +15,30 @@ export async function GET(req: Request) {
   const email     = searchParams.get("email");
   const limit     = parseInt(searchParams.get("limit") ?? "6", 10);
 
-  const { prisma } = await import("../../../lib/prisma");
+  const { prisma } = await import("@/lib/prisma");
 
   // ── Item-based collaborative filtering ─────────────────────────────────────
   if (type === "collab" && productId) {
-    // Find all orders containing this product
-    const ordersWithProduct = await prisma.order.findMany({
-      where: { items: { contains: String(productId) } },
-      select: { id: true, items: true },
+    // Find all orders containing this product via OrderItem
+    const orderItems = await prisma.orderItem.findMany({
+      where: { productId },
+      select: { orderId: true },
       take: 100,
     });
+    const orderIds = orderItems.map(oi => oi.orderId);
 
     // Build co-occurrence map
     const coOccurrence: Record<number, number> = {};
-    for (const order of ordersWithProduct) {
-      let items: any[] = [];
-      try { items = JSON.parse(order.items as string); } catch {}
-      for (const item of items) {
-        if (item.id !== productId) {
-          coOccurrence[item.id] = (coOccurrence[item.id] ?? 0) + 1;
-        }
+    if (orderIds.length > 0) {
+      const otherItems = await prisma.orderItem.findMany({
+        where: {
+          orderId: { in: orderIds },
+          productId: { not: productId },
+        },
+        select: { productId: true },
+      });
+      for (const item of otherItems) {
+        coOccurrence[item.productId] = (coOccurrence[item.productId] ?? 0) + 1;
       }
     }
 
@@ -104,19 +108,29 @@ export async function GET(req: Request) {
 
   // ── Personalized: based on customer history ────────────────────────────────
   if (type === "personal" && email) {
-    const recent = await prisma.order.findMany({
-      where: { customer: { email } },
-      orderBy: { createdAt: "desc" },
-      take: 5,
+    const customer = await prisma.customer.findUnique({
+      where: { email },
+      select: { id: true },
     });
-
-    // Extract bought product IDs
     const boughtIds: number[] = [];
-    for (const o of recent) {
-      try {
-        const items = JSON.parse(o.items as string);
-        items.forEach((i: any) => { if (!boughtIds.includes(i.id)) boughtIds.push(i.id); });
-      } catch {}
+    if (customer) {
+      const recent = await prisma.order.findMany({
+        where: { customerId: customer.id },
+        select: { id: true },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      });
+      if (recent.length > 0) {
+        const orderItems = await prisma.orderItem.findMany({
+          where: { orderId: { in: recent.map(o => o.id) } },
+          select: { productId: true },
+        });
+        orderItems.forEach(item => {
+          if (!boughtIds.includes(item.productId)) {
+            boughtIds.push(item.productId);
+          }
+        });
+      }
     }
 
     // Recommend from same categories

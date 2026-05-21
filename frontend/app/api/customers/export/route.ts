@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../lib/prisma";
-import { requireAdmin } from "../../../../lib/auth-middleware";
-import { logger } from "../../../../lib/logger";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/auth-middleware";
+import { logger } from "@/lib/logger";
 
 /**
  * GET /api/customers/export — GDPR Data Portability CSV (G-036)
