@@ -7,19 +7,38 @@ const AddStockSchema = z.object({
   productId:   z.number().int().positive().optional(),
   productName: z.string().min(1).max(200).optional(),
   category:    z.string().min(1).max(100).optional(),
-  quantity:    z.number().positive("Quantity must be positive"),
-  costPrice:   z.number().min(0,  "Cost price cannot be negative"),
+  quantity:    z.number(),
+  costPrice:   z.number().min(0, "Cost price cannot be negative"),
   supplier:    z.string().max(200).optional().default(""),
+  expiryDate:  z.string().datetime({ offset: true }).optional().nullable(),
+  batchRef:    z.string().max(100).optional().nullable(),
 });
 
-// ── GET /api/inventory — list all batches (admin only) ────────────────────────
+// ── GET /api/inventory — list batches with FEFO ordering ─────────────────────
 export async function GET(req: Request) {
   const authErr = requireAdmin(req);
   if (authErr) return authErr;
   try {
+    const { searchParams } = new URL(req.url);
+    const expiringDays = searchParams.get("expiring"); // e.g. ?expiring=7
+    const productId    = searchParams.get("productId");
+
+    const where: any = {};
+    if (productId) where.productId = parseInt(productId, 10);
+    if (expiringDays) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() + parseInt(expiringDays, 10));
+      where.expiryDate = { lte: cutoff, not: null };
+    }
+
     const batches = await prisma.inventoryBatch.findMany({
+      where,
       include:  { product: true },
-      orderBy:  { createdAt: "desc" },
+      // FEFO: sort by expiry ASC (null last) so oldest expiry sells first
+      orderBy:  [
+        { expiryDate: "asc" },
+        { createdAt:  "asc" },
+      ],
     });
     return NextResponse.json(batches);
   } catch {
@@ -50,7 +69,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: _msg }, { status: 400 });
     }
 
-    const { productId, productName, category, quantity, costPrice, supplier } = parsed.data;
+    const { productId, productName, category, quantity, costPrice, supplier, expiryDate, batchRef } = parsed.data;
 
     // Run everything atomically in one transaction
     // No try/catch inside transaction — any failure rolls back entire transaction
@@ -84,20 +103,23 @@ export async function POST(req: Request) {
       const product = await tx.product.findUnique({ where: { id: pId } });
       if (!product) throw new Error(`Product ${pId} not found.`);
 
-      // Create inventory batch record
+      // Create inventory batch record with optional expiry
       const batch = await tx.inventoryBatch.create({
         data: {
           productId: pId,
           quantity,
-          remaining: quantity,
-          costPrice,
+          remaining: Math.abs(quantity),
+          costPrice: Math.round(costPrice),
           supplier,
-          channel:   "admin",
+          channel:    "admin",
+          expiryDate: expiryDate ? new Date(expiryDate) : null,
+          batchRef:   batchRef ?? null,
         } as any,
         include: { product: true },
       });
 
       // Atomic stock increment — single SQL UPDATE (no race condition)
+      // quantity can be negative for wastage outward movements
       await tx.product.update({
         where: { id: pId },
         data:  { stock: { increment: quantity } },

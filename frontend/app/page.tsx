@@ -216,7 +216,7 @@ export default function GroceryUATReadyApp() {
   const [adminAlerts, setAdminAlerts] = useState([{ id: 1, type: "critical", msg: "Milk is out of stock!" }, { id: 2, type: "warning", msg: "Payment failed for Order #103" }]);
 
   const [inventoryBatches, setInventoryBatches] = useState<any[]>([]);
-  const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
+  const [newBatch, setNewBatch] = useState({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "", expiryDate: "", batchRef: "" });
   const [posSearch, setPosSearch] = useState("");
   const [posCart, setPosCart] = useState<any[]>([]);
   const [posSyncQueue, setPosSyncQueue] = useState<any[]>([]);
@@ -2386,6 +2386,33 @@ export default function GroceryUATReadyApp() {
                               )}
                             </div>
 
+                            {/* Expiry Date + Batch Ref — for perishables */}
+                            {(newBatch.category === "stock top-up" || newBatch.category === "customer return") && (
+                              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12, padding: "10px 12px", background: "#0f172a", borderRadius: 8, border: "1px solid #065f46" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  <label style={{ fontSize: 11, color: "#34d399", fontWeight: "bold", textTransform: "uppercase", letterSpacing: 1 }}>⏰ Best Before / Expiry Date</label>
+                                  <input
+                                    type="date"
+                                    value={newBatch.expiryDate}
+                                    onChange={e => setNewBatch({ ...newBatch, expiryDate: e.target.value })}
+                                    min={new Date().toISOString().split("T")[0]}
+                                    style={{ padding: 8, borderRadius: 8, background: "#1e293b", color: newBatch.expiryDate ? "#fbbf24" : "#94a3b8", border: "1px solid #065f46", minWidth: 160 }}
+                                  />
+                                  <span style={{ fontSize: 10, color: "#64748b" }}>Leave blank if no expiry (e.g. non-perishable)</span>
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: "bold", textTransform: "uppercase", letterSpacing: 1 }}>📦 Batch / Lot Ref</label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. LOT-2024-A3 or Delivery #12"
+                                    value={newBatch.batchRef}
+                                    onChange={e => setNewBatch({ ...newBatch, batchRef: e.target.value })}
+                                    style={{ padding: 8, borderRadius: 8, background: "#1e293b", color: "white", border: "1px solid #334155", minWidth: 220 }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
                             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                               <button onClick={async () => {
                                 if (!newBatch.productId) return window.alert("Strict Validation: You must securely target an existing product to post a transaction.");
@@ -2406,11 +2433,14 @@ export default function GroceryUATReadyApp() {
 
                                 const b = await fetch("/api/inventory", {
                                   method: "POST",
+                                  headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({
-                                    productId: newBatch.productId,
+                                    productId: parseInt(newBatch.productId),
                                     quantity: parsedQty * multiplier,
-                                    costPrice: newBatch.costPrice || 0,
-                                    supplier: newBatch.category + " - " + (newBatch.supplier || "System")
+                                    costPrice: parseFloat(newBatch.costPrice) || 0,
+                                    supplier: newBatch.category + " - " + (newBatch.supplier || "System"),
+                                    expiryDate: newBatch.expiryDate ? new Date(newBatch.expiryDate + "T23:59:00Z").toISOString() : null,
+                                    batchRef: newBatch.batchRef || null,
                                   })
                                 }).then(r => r.json());
 
@@ -2421,7 +2451,7 @@ export default function GroceryUATReadyApp() {
                                 fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
 
                                 setMessage("Ledger securely encoded and Stock updated.");
-                                setNewBatch({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "" });
+                                setNewBatch({ productId: "", productName: "", category: "stock top-up", quantity: "", costPrice: "", supplier: "", expiryDate: "", batchRef: "" });
                               }} style={{ padding: "10px 16px", borderRadius: 8, background: "#16a34a", color: "white", border: 0, fontWeight: "bold", cursor: "pointer", width: "100%" }}>Save Ledger Code</button>
                             </div>
                           </div>
@@ -2429,49 +2459,207 @@ export default function GroceryUATReadyApp() {
                           <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                             <h3 style={{ marginBottom: 12 }}>Detailed Top-up Ledger</h3>
                             <div style={{ width: "100%", overflowX: "auto" }}>
-                              <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13, minWidth: 600 }}>
+                              <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse", fontSize: 13, minWidth: 700 }}>
                                 <thead>
                                   <tr style={{ borderBottom: "1px solid #475569" }}>
-                                    <th style={{ padding: 8 }}>Date</th>
+                                    <th style={{ padding: 8 }}>Date In</th>
                                     <th style={{ padding: 8 }}>Product</th>
-                                    <th style={{ padding: 8 }}>Qty Loaded</th>
-                                    <th style={{ padding: 8 }}>Total Invoice Cost</th>
+                                    <th style={{ padding: 8 }}>Batch Ref</th>
+                                    <th style={{ padding: 8 }}>Qty</th>
+                                    <th style={{ padding: 8 }}>Invoice Cost</th>
                                     <th style={{ padding: 8 }}>Unit Cost</th>
                                     <th style={{ padding: 8 }}>Supplier</th>
+                                    <th style={{ padding: 8 }}>⏰ Expiry / BBE</th>
                                     <th style={{ padding: 8 }}>Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {inventoryBatches.filter(b => b.quantity >= 0).slice(0, 15).map(b => (
-                                    <tr key={b.id} style={{ borderBottom: "1px solid #1e293b" }}>
-                                      <td style={{ padding: 8 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString() : "-"}</td>
-                                      <td style={{ padding: 8 }}>{b.product?.name || "Unknown"}</td>
-                                      <td style={{ padding: 8, color: b.quantity < 0 ? "#ef4444" : "#86efac", fontWeight: "bold" }}>{b.quantity > 0 ? `+${b.quantity}` : b.quantity}</td>
-                                      <td style={{ padding: 8 }}>£{(b.costPrice * Math.abs(b.quantity)).toFixed(2)}</td>
-                                      <td style={{ padding: 8 }}>£{b.costPrice ? b.costPrice.toFixed(2) : "0.00"}</td>
-                                      <td style={{ padding: 8 }}>{b.supplier || "-"}</td>
-                                      <td style={{ padding: 8 }}>
-                                        <button onClick={async () => {
-                                          if (!window.confirm(`Warning: This will void ledger trace #${b.id} and revert its stock changes. Proceed?`)) return;
-
-                                          const pwd = window.prompt("Security Lock: Master Password required to Authorize destructive ledger mutation:");
-                                          if (pwd !== adminPass && pwd !== "admin123") return window.alert("Ledger Mutation Denied securely.");
-
-                                          const res = await fetch("/api/inventory?id=" + b.id, { method: "DELETE" }).then(r => r.json());
-                                          if (res.success) {
-                                            setInventoryBatches(prev => prev.filter(x => x.id !== b.id));
-                                            fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
-                                          } else {
-                                            window.alert("Ledger Void Failed: " + res.error);
-                                          }
-                                        }} style={{ background: "#dc2626", color: "white", padding: "4px 8px", borderRadius: 4, border: 0, cursor: "pointer", fontSize: 11 }}>Void</button>
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {inventoryBatches.filter((b: any) => b.quantity >= 0).slice(0, 30).map((b: any) => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const expiry = b.expiryDate ? new Date(b.expiryDate) : null;
+                                    const daysLeft = expiry ? Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null;
+                                    const isExpired  = daysLeft !== null && daysLeft < 0;
+                                    const isUrgent   = daysLeft !== null && daysLeft >= 0 && daysLeft <= 3;
+                                    const isWarning  = daysLeft !== null && daysLeft > 3 && daysLeft <= 7;
+                                    const rowBg = isExpired ? "#3f0f0f" : isUrgent ? "#2a1a0a" : "transparent";
+                                    return (
+                                      <tr key={b.id} style={{ borderBottom: "1px solid #1e293b", background: rowBg }}>
+                                        <td style={{ padding: 8, color: "#64748b" }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString() : "-"}</td>
+                                        <td style={{ padding: 8 }}><strong>{b.product?.name || "Unknown"}</strong></td>
+                                        <td style={{ padding: 8, color: "#38bdf8", fontSize: 11 }}>{b.batchRef || <span style={{ color: "#475569" }}>—</span>}</td>
+                                        <td style={{ padding: 8, color: b.quantity < 0 ? "#ef4444" : "#86efac", fontWeight: "bold" }}>{b.quantity > 0 ? `+${b.quantity}` : b.quantity}</td>
+                                        <td style={{ padding: 8 }}>£{((b.costPrice / 100) * Math.abs(b.quantity)).toFixed(2)}</td>
+                                        <td style={{ padding: 8 }}>£{b.costPrice ? (b.costPrice / 100).toFixed(2) : "0.00"}</td>
+                                        <td style={{ padding: 8, color: "#94a3b8", fontSize: 12 }}>{b.supplier || "—"}</td>
+                                        <td style={{ padding: 8 }}>
+                                          {expiry ? (
+                                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                              <span style={{
+                                                fontWeight: "bold", fontSize: 12,
+                                                color: isExpired ? "#fca5a5" : isUrgent ? "#fb923c" : isWarning ? "#fbbf24" : "#86efac"
+                                              }}>
+                                                {expiry.toLocaleDateString("en-GB")}
+                                              </span>
+                                              <span style={{
+                                                fontSize: 10, padding: "1px 6px", borderRadius: 4, display: "inline-block",
+                                                background: isExpired ? "#7f1d1d" : isUrgent ? "#7c2d12" : isWarning ? "#78350f" : "#14532d",
+                                                color: isExpired ? "#fca5a5" : isUrgent ? "#fb923c" : isWarning ? "#fbbf24" : "#86efac"
+                                              }}>
+                                                {isExpired ? `⛔ Expired ${Math.abs(daysLeft!)}d ago` : daysLeft === 0 ? "⚠️ Expires TODAY" : `${daysLeft}d left`}
+                                              </span>
+                                            </div>
+                                          ) : (
+                                            <span style={{ color: "#475569", fontSize: 11 }}>No expiry set</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                          {(isExpired || isUrgent) && (
+                                            <button onClick={async () => {
+                                              const reason = isExpired ? "expired" : "quality";
+                                              const lossVal = ((b.costPrice / 100) * Math.abs(b.quantity));
+                                              if (!window.confirm(`Log ${Math.abs(b.quantity)} units of ${b.product?.name} as WASTAGE (${reason})?\nEstimated loss: £${lossVal.toFixed(2)}`)) return;
+                                              const res = await fetch("/api/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: b.productId, quantity: -Math.abs(b.quantity), costPrice: b.costPrice / 100, supplier: `wastage:${reason}` }) }).then(r => r.json());
+                                              if (res.error) return setMessage("Error: " + res.error);
+                                              setInventoryBatches((prev: any[]) => prev.filter(x => x.id !== b.id));
+                                              fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                              setMessage(`⚠️ Wastage logged: ${Math.abs(b.quantity)} units of ${b.product?.name} — £${lossVal.toFixed(2)} loss`);
+                                            }} style={{ background: "#dc2626", color: "white", padding: "4px 8px", borderRadius: 4, border: 0, cursor: "pointer", fontSize: 10, fontWeight: "bold" }}>
+                                              Log Wastage
+                                            </button>
+                                          )}
+                                          <button onClick={async () => {
+                                            if (!window.confirm(`Void ledger trace #${b.id} and revert stock changes?`)) return;
+                                            const pwd = window.prompt("Master Password required:");
+                                            if (pwd !== adminPass && pwd !== "admin123") return window.alert("Denied.");
+                                            const res = await fetch("/api/inventory?id=" + b.id, { method: "DELETE" }).then(r => r.json());
+                                            if (res.success) {
+                                              setInventoryBatches((prev: any[]) => prev.filter(x => x.id !== b.id));
+                                              fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                            } else window.alert("Void Failed: " + res.error);
+                                          }} style={{ background: "#334155", color: "#94a3b8", padding: "4px 8px", borderRadius: 4, border: 0, cursor: "pointer", fontSize: 10 }}>Void</button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
                           </div>
+
+                          {/* ── Expiry Tracker — FEFO Dashboard ─────────────────── */}
+                          {(() => {
+                            const today = new Date(); today.setHours(0, 0, 0, 0);
+                            const expiringBatches = inventoryBatches
+                              .filter((b: any) => b.expiryDate && b.quantity > 0)
+                              .map((b: any) => {
+                                const exp = new Date(b.expiryDate);
+                                const daysLeft = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                                return { ...b, daysLeft, exp };
+                              })
+                              .sort((a: any, b: any) => a.daysLeft - b.daysLeft);
+
+                            const expired   = expiringBatches.filter((b: any) => b.daysLeft < 0);
+                            const today7    = expiringBatches.filter((b: any) => b.daysLeft >= 0 && b.daysLeft <= 7);
+                            const upcoming  = expiringBatches.filter((b: any) => b.daysLeft > 7 && b.daysLeft <= 30);
+
+                            return (
+                              <div style={{ padding: 16, border: `2px solid ${expired.length > 0 ? "#dc2626" : today7.length > 0 ? "#f97316" : "#334155"}`, borderRadius: 12 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                                  <div>
+                                    <h3 style={{ margin: 0, color: expired.length > 0 ? "#fca5a5" : "#e2e8f0" }}>
+                                      ⏰ Expiry Tracker — FEFO Dashboard
+                                    </h3>
+                                    <p style={{ fontSize: 12, color: "#64748b", margin: "4px 0 0" }}>
+                                      First Expired, First Out — batches are sold in expiry order automatically.
+                                    </p>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 10 }}>
+                                    {expired.length > 0 && <span style={{ background: "#7f1d1d", color: "#fca5a5", padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: "bold" }}>⛔ {expired.length} EXPIRED</span>}
+                                    {today7.length > 0 && <span style={{ background: "#78350f", color: "#fbbf24", padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: "bold" }}>⚠️ {today7.length} within 7 days</span>}
+                                    {upcoming.length > 0 && <span style={{ background: "#1c3a2a", color: "#86efac", padding: "4px 10px", borderRadius: 6, fontSize: 12 }}>✅ {upcoming.length} within 30 days</span>}
+                                  </div>
+                                </div>
+
+                                {expiringBatches.length === 0 ? (
+                                  <div style={{ color: "#475569", fontStyle: "italic", padding: 12 }}>
+                                    No batches with expiry dates yet. Add expiry dates when receiving stock above to enable tracking.
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* Expired + Urgent Batches */}
+                                    {[...expired, ...today7].length > 0 && (
+                                      <div style={{ marginBottom: 16 }}>
+                                        <div style={{ fontSize: 11, color: "#ef4444", fontWeight: "bold", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>🚨 Requires Immediate Action</div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                          {[...expired, ...today7].map((b: any, i: number) => (
+                                            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: b.daysLeft < 0 ? "#3f0f0f" : "#2a1a0a", borderRadius: 8, border: `1px solid ${b.daysLeft < 0 ? "#dc2626" : "#ea580c"}` }}>
+                                              <div style={{ flex: 1 }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                                  <strong style={{ color: "#e2e8f0" }}>{b.product?.name || "Unknown"}</strong>
+                                                  {b.batchRef && <span style={{ fontSize: 10, background: "#1e293b", color: "#38bdf8", padding: "1px 6px", borderRadius: 3 }}>{b.batchRef}</span>}
+                                                </div>
+                                                <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                                                  {b.quantity} {b.product?.unit || "units"} · Best Before: {b.exp.toLocaleDateString("en-GB")} ·
+                                                  <span style={{ marginLeft: 4, fontWeight: "bold", color: b.daysLeft < 0 ? "#fca5a5" : "#fb923c" }}>
+                                                    {b.daysLeft < 0 ? ` Expired ${Math.abs(b.daysLeft)} day(s) ago` : b.daysLeft === 0 ? " Expires TODAY" : ` ${b.daysLeft} day(s) left`}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                                                <button onClick={async () => {
+                                                  const reason = b.daysLeft < 0 ? "expired" : "quality";
+                                                  const lossVal = ((b.costPrice / 100) * b.quantity);
+                                                  if (!window.confirm(`Log ALL ${b.quantity} units of ${b.product?.name} as WASTAGE?\nEstimated loss: £${lossVal.toFixed(2)}`)) return;
+                                                  const res = await fetch("/api/inventory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId: b.productId, quantity: -b.quantity, costPrice: b.costPrice / 100, supplier: `wastage:${reason}` }) }).then(r => r.json());
+                                                  if (res.error) return setMessage("Error: " + res.error);
+                                                  setInventoryBatches((prev: any[]) => [...prev.filter(x => x.id !== b.id), res]);
+                                                  fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                                  setMessage(`✅ Wastage logged — £${lossVal.toFixed(2)} loss recorded`);
+                                                }} style={{ padding: "6px 12px", background: "#dc2626", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: "bold" }}>
+                                                  Log All as Wastage
+                                                </button>
+                                                <button onClick={async () => {
+                                                  const newPrice = window.prompt(`Mark-down price for ${b.product?.name}?\nCurrent price: £${b.product?.price?.toFixed(2)}\nEnter new reduced price (£):`);
+                                                  if (!newPrice || isNaN(parseFloat(newPrice))) return;
+                                                  const res = await fetch("/api/products", { method: "PUT", headers: { "Content-Type": "application/json", "x-admin-token": adminPass }, body: JSON.stringify({ id: b.productId, price: parseFloat(newPrice), promo: `Quick Sale — BBE ${b.exp.toLocaleDateString("en-GB")}`, onSale: true }) }).then(r => r.json());
+                                                  if (res.error) return setMessage("Price update failed: " + res.error);
+                                                  fetch("/api/products").then(r => r.json()).then(data => setAdminProducts(Array.isArray(data) ? data : (data?.products ?? [])));
+                                                  setMessage(`🏷️ ${b.product?.name} marked down to £${parseFloat(newPrice).toFixed(2)} — shown as "Quick Sale" to customers`);
+                                                }} style={{ padding: "6px 12px", background: "#d97706", color: "white", border: 0, borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: "bold" }}>
+                                                  🏷️ Mark Down Price
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Upcoming — within 30 days */}
+                                    {upcoming.length > 0 && (
+                                      <div>
+                                        <div style={{ fontSize: 11, color: "#86efac", fontWeight: "bold", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>📅 Upcoming Expiries (8–30 days)</div>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                          {upcoming.map((b: any, i: number) => (
+                                            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", background: "#0f172a", borderRadius: 8, border: "1px solid #1e3a2a" }}>
+                                              <div>
+                                                <strong style={{ color: "#e2e8f0" }}>{b.product?.name}</strong>
+                                                {b.batchRef && <span style={{ marginLeft: 8, fontSize: 10, color: "#38bdf8" }}>{b.batchRef}</span>}
+                                                <span style={{ marginLeft: 8, fontSize: 12, color: "#94a3b8" }}>{b.quantity} {b.product?.unit || "units"} · BBE: {b.exp.toLocaleDateString("en-GB")}</span>
+                                              </div>
+                                              <span style={{ fontSize: 12, color: "#86efac", fontWeight: "bold" }}>{b.daysLeft} days left</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
+
 
                           <div style={{ padding: 16, border: "1px solid #334155", borderRadius: 12 }}>
                             <h3 style={{ marginBottom: 12 }}>Financial Profit & Loss (P&L)</h3>

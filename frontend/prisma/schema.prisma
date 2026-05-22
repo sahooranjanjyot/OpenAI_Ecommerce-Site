@@ -577,19 +577,22 @@ model RecentlyViewed {
 }
 
 model InventoryBatch {
-  id        Int      @id @default(autoincrement())
-  productId Int
-  quantity  Float    @default(0)
-  remaining Float    @default(0)
-  costPrice Int      @default(0)
-  supplier  String?
-  channel   String   @default("admin")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id         Int       @id @default(autoincrement())
+  productId  Int
+  quantity   Float     @default(0)
+  remaining  Float     @default(0)
+  costPrice  Int       @default(0)
+  supplier   String?
+  channel    String    @default("admin")
+  expiryDate DateTime?
+  batchRef   String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
   @@index([createdAt])
+  @@index([expiryDate])
 }
 
 model BackInStockAlert {
